@@ -55,8 +55,7 @@ private data class Message(
   val text: String,
 )
 
-// TODO: should be per channel
-private val lastMessages = mutableListOf<Message>()
+private val lastMessages = mutableMapOf<String, MutableList<Message>>()
 
 suspend fun main(av: Array<String>) {
   LOGGER.info("Hello, World!")
@@ -105,17 +104,21 @@ suspend fun main(av: Array<String>) {
       }
       LOGGER.debug(messageText)
       val isAssistant = event.user == botMember.id
-      if (isAssistant) {
-        lastMessages.add(Message(isAssistant = true, eventTextWithMentionsReplaced))
-      } else {
-        lastMessages.add(Message(isAssistant = false, messageText))
-      }
-      if (lastMessages.size > 10) lastMessages.removeAt(0)
-      LOGGER.debug("lastMessages=$lastMessages")
+      val channelLastMessages = lastMessages.getOrPut(event.channel) { mutableListOf() }
+      channelLastMessages.add(
+        if (isAssistant) {
+          Message(isAssistant = true, eventTextWithMentionsReplaced)
+        } else {
+          Message(isAssistant = false, messageText)
+        }
+      )
+      if (channelLastMessages.size > 10) channelLastMessages.removeAt(0)
+      LOGGER.debug("channelLastMessages=$channelLastMessages")
 
       if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
-        val botResponse = getBotResponse(openAIClient = openAIClient, systemMessage = arguments.systemMessage)
-          .replaceMentionsNameToUserId(allMembers)
+        val botResponse =
+          getBotResponse(openAIClient = openAIClient, systemMessage = arguments.systemMessage, channelLastMessages = channelLastMessages)
+            .replaceMentionsNameToUserId(allMembers)
         LOGGER.debug("Bot response: $botResponse")
         slackClient.chatPostMessage(event.channel, botResponse)
       }
@@ -125,11 +128,11 @@ suspend fun main(av: Array<String>) {
   }
 }
 
-private suspend fun getBotResponse(openAIClient: OpenAIClient, systemMessage: String): String {
+private suspend fun getBotResponse(openAIClient: OpenAIClient, systemMessage: String, channelLastMessages: List<Message>): String {
   return try {
     openAIClient.chatCompletion(
       systemMessage = systemMessage.trim(),
-      messages = lastMessages.map {
+      messages = channelLastMessages.map {
         if (it.isAssistant) {
           OpenAIClient.Message.Assistant(it.text)
         } else {
