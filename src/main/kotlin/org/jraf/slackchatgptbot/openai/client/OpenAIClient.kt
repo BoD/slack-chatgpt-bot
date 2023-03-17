@@ -99,9 +99,14 @@ class OpenAIClient(private val clientConfiguration: ClientConfiguration) {
     data class Assistant(override val content: String) : Message
   }
 
-  suspend fun chatCompletion(systemMessage: String, messages: List<Message>): String? {
+  suspend fun chatCompletion(
+    model: String,
+    systemMessage: String,
+    messages: List<Message>,
+  ): String? {
     val chatCompletions = service.chatCompletions(
       JsonChatCompletionsRequest(
+        model = model,
         messages = buildList {
           add(JsonMessage(role = JsonMessage.ROLE_SYSTEM, content = systemMessage))
           addAll(

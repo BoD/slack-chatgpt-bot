@@ -131,6 +131,7 @@ suspend fun main(av: Array<String>) {
 private suspend fun getBotResponse(openAIClient: OpenAIClient, systemMessage: String, channelLastMessages: List<Message>): String {
   return try {
     openAIClient.chatCompletion(
+      model = "gpt-4",
       systemMessage = systemMessage.trim(),
       messages = channelLastMessages.map {
         if (it.isAssistant) {
