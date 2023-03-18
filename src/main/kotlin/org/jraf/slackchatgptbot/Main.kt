@@ -32,10 +32,14 @@ import org.jraf.slackchatgptbot.slack.client.configuration.ClientConfiguration
 import org.jraf.slackchatgptbot.slack.client.configuration.HttpConfiguration
 import org.jraf.slackchatgptbot.slack.client.configuration.HttpLoggingLevel
 import org.jraf.slackchatgptbot.slack.json.JsonMember
+import org.jraf.slackchatgptbot.slack.json.JsonMessageEvent
+import org.jraf.slackchatgptbot.slack.json.JsonReactionAddedEvent
+import org.jraf.slackchatgptbot.slack.json.JsonUnknownEvent
 import org.slf4j.LoggerFactory
 import org.slf4j.simple.SimpleLogger
 import java.text.SimpleDateFormat
 import java.util.Date
+import kotlin.random.Random
 
 private val LOGGER = run {
   // This must be done before any logger is initialized
@@ -45,6 +49,8 @@ private val LOGGER = run {
 
   LoggerFactory.getLogger("Main")
 }
+
+private const val FAKE_BOT_RESPONSES = false
 
 private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
@@ -56,6 +62,7 @@ private const val PROBLEM_MESSAGE = "Oops there was a problem :( Check the logs.
 private data class Message(
   val isAssistant: Boolean,
   val text: String,
+  val ts: String?,
 )
 
 private val lastMessages = mutableMapOf<String, MutableList<Message>>()
@@ -96,45 +103,114 @@ suspend fun main(av: Array<String>) {
     LOGGER.debug("Connecting to WebSocket webSocketUrl=$webSocketUrl")
 
     slackClient.openWebSocket(webSocketUrl) { event ->
-      if (event.text.isBlank()) return@openWebSocket
+      LOGGER.debug("event=$event")
+      when (event) {
+        is JsonUnknownEvent -> {
+          LOGGER.warn("Ignoring unknown event type=${event.type}")
+          return@openWebSocket
+        }
 
-      val eventTextWithMentionsReplaced = event.text.replaceMentionsUserIdToName(allMembers)
-      val messageText = buildString {
-        append(DATE_FORMAT.format(Date()))
-        append(" <")
-        append(allMembers[event.user]!!.name)
-        append("> ")
-        append(eventTextWithMentionsReplaced)
-      }
-      LOGGER.debug(messageText)
-
-      if (event.text == PROBLEM_MESSAGE) {
-        LOGGER.debug("Ignoring problem message")
-      } else {
-        val isAssistant = event.user == botMember.id
-        val channelLastMessages = lastMessages.getOrPut(event.channel) { mutableListOf() }
-        channelLastMessages.add(
-          if (isAssistant) {
-            Message(isAssistant = true, eventTextWithMentionsReplaced)
-          } else {
-            Message(isAssistant = false, messageText)
+        is JsonReactionAddedEvent -> {
+          val messageTs = event.item.ts
+          val channel: String? = lastMessages.asIterable().firstOrNull { (_, v) -> v.any { it.ts == messageTs } }?.key
+          if (channel == null) {
+            LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs was not found in lastMessages")
+            return@openWebSocket
           }
-        )
-        if (channelLastMessages.size > 10) channelLastMessages.removeAt(0)
+          val channelLastMessages = getChannelLastMessages(channel)
+          if (messageTs != channelLastMessages.filterNot { it.ts == null }.lastOrNull()?.ts) {
+            LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs is not the last message")
+            return@openWebSocket
+          }
+          val isAssistant = event.user == botMember.id
+          val messageText = buildString {
+            append(DATE_FORMAT.format(Date()))
+            append(" *** ")
+            append(allMembers[event.user]!!.name)
+            append(" reacted with :${event.reaction}: to the previous message")
+          }
+          channelLastMessages.addWithMaxSize(Message(isAssistant = isAssistant, text = messageText, ts = null))
+          LOGGER.debug("channelLastMessages=${channelLastMessages.joinToString("\n")}")
 
-        LOGGER.debug("channelLastMessages=$channelLastMessages")
+          val randomInt = Random.nextInt(2)
+          LOGGER.debug("randomInt=$randomInt")
+          if (!isAssistant && randomInt == 0) {
+            val botResponse =
+              getBotResponse(
+                openAIClient = openAIClient,
+                systemMessage = arguments.reactionsSystemMessage.trim(),
+                exampleMessages = arguments.reactionsExampleMessages.mapIndexed { index, text ->
+                  Message(
+                    isAssistant = index % 2 == 1,
+                    text = text,
+                    ts = null
+                  )
+                },
+                channelLastMessages = channelLastMessages
+              )
+            LOGGER.debug("Bot response: $botResponse")
+            val emojis = botResponse.split(" ")
+              .filter { it.startsWith(":") && it.endsWith(":") }
+              .map { it.substring(1, it.length - 1) }
+            LOGGER.debug("Emojis: $emojis")
+            for (emoji in emojis) {
+              try {
+                slackClient.reactionsAdd(channel = channel, name = emoji, timestamp = messageTs)
+              } catch (e: Exception) {
+                LOGGER.warn("Error while adding reaction $emoji", e)
+              }
+            }
+          }
+        }
 
-        if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
-          val botResponse =
-            getBotResponse(
-              openAIClient = openAIClient,
-              systemMessage = arguments.systemMessage.trim(),
-              exampleMessages = arguments.exampleMessages.mapIndexed { index, it -> Message(isAssistant = index % 2 == 1, it) },
-              channelLastMessages = channelLastMessages
+        is JsonMessageEvent -> {
+          if (event.text.isBlank()) {
+            LOGGER.debug("Ignoring message event because text is blank (probably an image)")
+            return@openWebSocket
+          }
+          val eventTextWithMentionsReplaced = event.text.replaceMentionsUserIdToName(allMembers)
+          val messageText = buildString {
+            append(DATE_FORMAT.format(Date()))
+            append(" <")
+            append(allMembers[event.user]!!.name)
+            append("> ")
+            append(eventTextWithMentionsReplaced)
+          }
+          LOGGER.debug(messageText)
+
+          if (event.text == PROBLEM_MESSAGE) {
+            LOGGER.debug("Ignoring problem message")
+          } else {
+            val isAssistant = event.user == botMember.id
+            val channelLastMessages = getChannelLastMessages(event.channel)
+            channelLastMessages.addWithMaxSize(
+              if (isAssistant) {
+                Message(isAssistant = true, text = eventTextWithMentionsReplaced, ts = event.ts)
+              } else {
+                Message(isAssistant = false, text = messageText, ts = event.ts)
+              }
             )
-              .replaceMentionsNameToUserId(allMembers)
-          LOGGER.debug("Bot response: $botResponse")
-          slackClient.chatPostMessage(event.channel, botResponse)
+            LOGGER.debug("channelLastMessages=${channelLastMessages.joinToString("\n")}")
+
+            if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
+              val botResponse =
+                getBotResponse(
+                  openAIClient = openAIClient,
+                  systemMessage = arguments.messagesSystemMessage.trim(),
+                  exampleMessages = arguments.messagesExampleMessages.mapIndexed { index, text ->
+                    Message(
+                      isAssistant = index % 2 == 1,
+                      text = text,
+                      ts = null
+                    )
+                  },
+                  channelLastMessages = channelLastMessages
+                )
+                  .replaceMentionsNameToUserId(allMembers)
+              LOGGER.debug("Bot response: $botResponse")
+              slackClient.chatPostMessage(event.channel, botResponse)
+            }
+          }
         }
       }
     }
@@ -143,12 +219,21 @@ suspend fun main(av: Array<String>) {
   }
 }
 
+private fun <E> MutableList<E>.addWithMaxSize(element: E) {
+  add(element)
+  if (size > 12) removeAt(0)
+}
+
+private fun getChannelLastMessages(channel: String) = lastMessages.getOrPut(channel) { mutableListOf() }
+
 private suspend fun getBotResponse(
   openAIClient: OpenAIClient,
   systemMessage: String,
   exampleMessages: List<Message>,
   channelLastMessages: List<Message>,
 ): String {
+  if (FAKE_BOT_RESPONSES) return "Fake bot response"
+
   val messages = (exampleMessages + channelLastMessages).map {
     if (it.isAssistant) {
       OpenAIClient.Message.Assistant(it.text)

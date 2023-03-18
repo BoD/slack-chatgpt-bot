@@ -26,9 +26,8 @@ package org.jraf.slackchatgptbot.arguments
 
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
-import kotlinx.cli.optional
+import kotlinx.cli.multiple
 import kotlinx.cli.required
-import kotlinx.cli.vararg
 
 class Arguments(av: Array<String>) {
   private val parser = ArgParser("slack-chatgpt-bot")
@@ -65,27 +64,43 @@ class Arguments(av: Array<String>) {
   )
     .required()
 
-  val systemMessage: String by parser.option(
+  val messagesSystemMessage: String by parser.option(
     type = ArgType.String,
-    fullName = "system-message",
-    shortName = "m",
-    description = "The System Message to pass to OpenAI"
+    fullName = "system-message-messages",
+    shortName = "sm",
+    description = "The System Message to pass to OpenAI for the messages"
   )
     .required()
 
-  val exampleMessages: List<String> by parser.argument(
+  val messagesExampleMessages: List<String> by parser.option(
     type = ArgType.String,
-    fullName = "example-messages",
-    description = "Example Messages to pass to OpenAI"
+    fullName = "example-messages-messages",
+    shortName = "em",
+    description = "Example Messages to pass to OpenAI for the messages"
   )
-    .optional()
-    .vararg()
+    .multiple()
+
+  val reactionsSystemMessage: String by parser.option(
+    type = ArgType.String,
+    fullName = "system-message-reactions",
+    shortName = "sr",
+    description = "The System Message to pass to OpenAI for the reactions"
+  )
+    .required()
+
+  val reactionsExampleMessages: List<String> by parser.option(
+    type = ArgType.String,
+    fullName = "example-messages-reactions",
+    shortName = "er",
+    description = "Example Messages to pass to OpenAI for the reactions"
+  )
+    .multiple()
 
   init {
     parser.parse(av)
   }
 
   override fun toString(): String {
-    return "Arguments(openAiAuthToken='$openAiAuthToken', slackAppToken='$slackAppToken', slackBotUserOAuthToken='$slackBotUserOAuthToken', botName='$botName', systemMessage='$systemMessage', exampleMessages=$exampleMessages)"
+    return "Arguments(openAiAuthToken='$openAiAuthToken', slackAppToken='$slackAppToken', slackBotUserOAuthToken='$slackBotUserOAuthToken', botName='$botName', messagesSystemMessage='$messagesSystemMessage', messagesExampleMessages=$messagesExampleMessages, reactionsSystemMessage='$reactionsSystemMessage', reactionsExampleMessages=$reactionsExampleMessages)"
   }
 }

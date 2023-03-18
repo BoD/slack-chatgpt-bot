@@ -39,11 +39,15 @@ import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.modules.SerializersModule
+import kotlinx.serialization.modules.polymorphic
 import org.jraf.slackchatgptbot.slack.client.configuration.ClientConfiguration
 import org.jraf.slackchatgptbot.slack.client.configuration.HttpLoggingLevel
 import org.jraf.slackchatgptbot.slack.json.JsonChatPostMessageRequest
 import org.jraf.slackchatgptbot.slack.json.JsonEvent
 import org.jraf.slackchatgptbot.slack.json.JsonMember
+import org.jraf.slackchatgptbot.slack.json.JsonReactionAddRequest
+import org.jraf.slackchatgptbot.slack.json.JsonUnknownEvent
 import org.slf4j.LoggerFactory
 
 class SlackClient(private val clientConfiguration: ClientConfiguration) {
@@ -59,6 +63,11 @@ class SlackClient(private val clientConfiguration: ClientConfiguration) {
     val json = Json {
       ignoreUnknownKeys = true
       useAlternativeNames = false
+      serializersModule = SerializersModule {
+        polymorphic(JsonEvent::class) {
+          defaultDeserializer { JsonUnknownEvent.serializer() }
+        }
+      }
     }
     return HttpClient {
       install(ContentNegotiation) {
@@ -127,5 +136,12 @@ class SlackClient(private val clientConfiguration: ClientConfiguration) {
 
   suspend fun chatPostMessage(channel: String, text: String) {
     service.chatPostMessage(clientConfiguration.botUserOAuthToken, JsonChatPostMessageRequest(channel = channel, text = text))
+  }
+
+  suspend fun reactionsAdd(channel: String, timestamp: String, name: String) {
+    service.reactionsAdd(
+      clientConfiguration.botUserOAuthToken,
+      JsonReactionAddRequest(channel = channel, timestamp = timestamp, name = name)
+    )
   }
 }

@@ -44,6 +44,7 @@ import org.jraf.slackchatgptbot.slack.json.JsonAppsConnectionsOpenResponse
 import org.jraf.slackchatgptbot.slack.json.JsonChatPostMessageRequest
 import org.jraf.slackchatgptbot.slack.json.JsonEvent
 import org.jraf.slackchatgptbot.slack.json.JsonPayloadEnvelope
+import org.jraf.slackchatgptbot.slack.json.JsonReactionAddRequest
 import org.jraf.slackchatgptbot.slack.json.JsonUsersListResponse
 import org.slf4j.LoggerFactory
 
@@ -77,6 +78,15 @@ class SlackService(
   // https://api.slack.com/methods/chat.postMessage
   suspend fun chatPostMessage(botUserOAuthToken: String, request: JsonChatPostMessageRequest) {
     httpClient.post("$URL_BASE/chat.postMessage") {
+      header("Authorization", "Bearer $botUserOAuthToken")
+      contentType(ContentType.Application.Json)
+      setBody(request)
+    }
+  }
+
+  // https://api.slack.com/methods/reactions.add
+  suspend fun reactionsAdd(botUserOAuthToken: String, request: JsonReactionAddRequest) {
+    httpClient.post("$URL_BASE/reactions.add") {
       header("Authorization", "Bearer $botUserOAuthToken")
       contentType(ContentType.Application.Json)
       setBody(request)

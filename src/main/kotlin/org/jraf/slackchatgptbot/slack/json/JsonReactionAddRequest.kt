@@ -7,7 +7,7 @@
  *                              /___/
  * repository.
  *
- * Copyright (C) 2023-present Benoit 'BoD' Lubek (BoD@JRAF.org)
+ * Copyright (C) 2020-present Benoit 'BoD' Lubek (BoD@JRAF.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,44 +22,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 package org.jraf.slackchatgptbot.slack.json
 
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonClassDiscriminator
-
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
-@JsonClassDiscriminator("type")
-sealed interface JsonEvent
 
 @Serializable
-@SerialName("message")
-data class JsonMessageEvent(
-  val user: String,
+data class JsonReactionAddRequest(
   val channel: String,
-  val text: String = "",
-  val ts: String,
-) : JsonEvent
-
-@Serializable
-@SerialName("reaction_added")
-data class JsonReactionAddedEvent(
-  val user: String,
-  val reaction: String = "",
-  val item: JsonReactionItem,
-) : JsonEvent
-
-@Serializable
-data class JsonReactionItem(
-  val type: String,
-  val channel: String = "",
-  val ts: String = "",
+  val name: String,
+  val timestamp: String,
 )
 
-@Serializable
-data class JsonUnknownEvent(
-  val type: String,
-) : JsonEvent
