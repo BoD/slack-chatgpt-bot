@@ -27,6 +27,7 @@ package org.jraf.slackchatgptbot.slack.client
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyBuilder
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.logging.DEFAULT
 import io.ktor.client.plugins.logging.LogLevel
@@ -62,6 +63,11 @@ class SlackClient(private val clientConfiguration: ClientConfiguration) {
     return HttpClient {
       install(ContentNegotiation) {
         json(json)
+      }
+      install(HttpTimeout) {
+        requestTimeoutMillis = 60_000
+        connectTimeoutMillis = 60_000
+        socketTimeoutMillis = 60_000
       }
       install(WebSockets) {
         pingInterval = 60_000

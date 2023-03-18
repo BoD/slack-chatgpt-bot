@@ -27,6 +27,7 @@ package org.jraf.slackchatgptbot.openai.client
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyBuilder
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.auth.Auth
 import io.ktor.client.plugins.auth.providers.BearerTokens
 import io.ktor.client.plugins.auth.providers.bearer
@@ -66,6 +67,11 @@ class OpenAIClient(private val clientConfiguration: ClientConfiguration) {
             BearerTokens(clientConfiguration.authBearerToken, "")
           }
         }
+      }
+      install(HttpTimeout) {
+        requestTimeoutMillis = 60_000
+        connectTimeoutMillis = 60_000
+        socketTimeoutMillis = 60_000
       }
       engine {
         // Setup a proxy if requested

@@ -47,8 +47,11 @@ private val LOGGER = run {
 }
 
 private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+
 private val MENTION_ID_REGEX = Regex("<@([A-Z0-9]+)>")
 private val MENTION_NAME_REGEX = Regex("@([a-zA-Z0-9_]+)")
+
+private const val PROBLEM_MESSAGE = "Oops there was a problem :( Check the logs."
 
 private data class Message(
   val isAssistant: Boolean,
@@ -104,29 +107,35 @@ suspend fun main(av: Array<String>) {
         append(eventTextWithMentionsReplaced)
       }
       LOGGER.debug(messageText)
-      val isAssistant = event.user == botMember.id
-      val channelLastMessages = lastMessages.getOrPut(event.channel) { mutableListOf() }
-      channelLastMessages.add(
-        if (isAssistant) {
-          Message(isAssistant = true, eventTextWithMentionsReplaced)
-        } else {
-          Message(isAssistant = false, messageText)
-        }
-      )
-      if (channelLastMessages.size > 10) channelLastMessages.removeAt(0)
-      LOGGER.debug("channelLastMessages=$channelLastMessages")
 
-      if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
-        val botResponse =
-          getBotResponse(
-            openAIClient = openAIClient,
-            systemMessage = arguments.systemMessage,
-            exampleMessages = arguments.exampleMessages.mapIndexed { index, it -> Message(isAssistant = index % 2 == 1, it) },
-            channelLastMessages = channelLastMessages
-          )
-            .replaceMentionsNameToUserId(allMembers)
-        LOGGER.debug("Bot response: $botResponse")
-        slackClient.chatPostMessage(event.channel, botResponse)
+      if (event.text == PROBLEM_MESSAGE) {
+        LOGGER.debug("Ignoring problem message")
+      } else {
+        val isAssistant = event.user == botMember.id
+        val channelLastMessages = lastMessages.getOrPut(event.channel) { mutableListOf() }
+        channelLastMessages.add(
+          if (isAssistant) {
+            Message(isAssistant = true, eventTextWithMentionsReplaced)
+          } else {
+            Message(isAssistant = false, messageText)
+          }
+        )
+        if (channelLastMessages.size > 10) channelLastMessages.removeAt(0)
+
+        LOGGER.debug("channelLastMessages=$channelLastMessages")
+
+        if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
+          val botResponse =
+            getBotResponse(
+              openAIClient = openAIClient,
+              systemMessage = arguments.systemMessage,
+              exampleMessages = arguments.exampleMessages.mapIndexed { index, it -> Message(isAssistant = index % 2 == 1, it) },
+              channelLastMessages = channelLastMessages
+            )
+              .replaceMentionsNameToUserId(allMembers)
+          LOGGER.debug("Bot response: $botResponse")
+          slackClient.chatPostMessage(event.channel, botResponse)
+        }
       }
     }
     LOGGER.debug("Was disconnected, reconnecting...")
@@ -156,7 +165,7 @@ private suspend fun getBotResponse(
     LOGGER.warn("Could not get chat completion", e)
     null
   }
-    ?: "Oops there was a problem :( Check the logs."
+    ?: PROBLEM_MESSAGE
 }
 
 private fun String.replaceMentionsUserIdToName(allMembers: Map<String, JsonMember>): String {
