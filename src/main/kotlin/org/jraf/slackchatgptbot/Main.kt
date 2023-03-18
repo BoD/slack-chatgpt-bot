@@ -60,6 +60,7 @@ private val lastMessages = mutableMapOf<String, MutableList<Message>>()
 suspend fun main(av: Array<String>) {
   LOGGER.info("Hello, World!")
   val arguments = Arguments(av)
+  LOGGER.info("arguments=$arguments")
 
   val openAIClient = OpenAIClient(
     org.jraf.slackchatgptbot.openai.client.configuration.ClientConfiguration(
@@ -117,7 +118,12 @@ suspend fun main(av: Array<String>) {
 
       if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
         val botResponse =
-          getBotResponse(openAIClient = openAIClient, systemMessage = arguments.systemMessage, channelLastMessages = channelLastMessages)
+          getBotResponse(
+            openAIClient = openAIClient,
+            systemMessage = arguments.systemMessage,
+            exampleMessages = arguments.exampleMessages.mapIndexed { index, it -> Message(isAssistant = index % 2 == 1, it) },
+            channelLastMessages = channelLastMessages
+          )
             .replaceMentionsNameToUserId(allMembers)
         LOGGER.debug("Bot response: $botResponse")
         slackClient.chatPostMessage(event.channel, botResponse)
@@ -128,12 +134,17 @@ suspend fun main(av: Array<String>) {
   }
 }
 
-private suspend fun getBotResponse(openAIClient: OpenAIClient, systemMessage: String, channelLastMessages: List<Message>): String {
+private suspend fun getBotResponse(
+  openAIClient: OpenAIClient,
+  systemMessage: String,
+  exampleMessages: List<Message>,
+  channelLastMessages: List<Message>,
+): String {
   return try {
     openAIClient.chatCompletion(
       model = "gpt-4",
       systemMessage = systemMessage.trim(),
-      messages = channelLastMessages.map {
+      messages = (exampleMessages + channelLastMessages).map {
         if (it.isAssistant) {
           OpenAIClient.Message.Assistant(it.text)
         } else {

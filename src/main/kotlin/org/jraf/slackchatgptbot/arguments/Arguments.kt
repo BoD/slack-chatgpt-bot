@@ -26,8 +26,9 @@ package org.jraf.slackchatgptbot.arguments
 
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
-import kotlinx.cli.ExperimentalCli
+import kotlinx.cli.optional
 import kotlinx.cli.required
+import kotlinx.cli.vararg
 
 class Arguments(av: Array<String>) {
   private val parser = ArgParser("slack-chatgpt-bot")
@@ -37,37 +38,54 @@ class Arguments(av: Array<String>) {
     fullName = "openai-auth-token",
     shortName = "o",
     description = "OpenAI bearer token"
-  ).required()
+  )
+    .required()
 
   val slackAppToken: String by parser.option(
     type = ArgType.String,
     fullName = "slack-app-token",
     shortName = "a",
     description = "Slack app token (starts with xoxb-)"
-  ).required()
+  )
+    .required()
 
   val slackBotUserOAuthToken: String by parser.option(
     type = ArgType.String,
     fullName = "slack-bot-user-oauth-token",
     shortName = "u",
     description = "Slack bot user OAuth token (starts with xapp-)"
-  ).required()
+  )
+    .required()
 
   val botName: String by parser.option(
     type = ArgType.String,
     fullName = "bot-name",
     shortName = "n",
     description = "The bot's name"
-  ).required()
+  )
+    .required()
 
   val systemMessage: String by parser.option(
     type = ArgType.String,
     fullName = "system-message",
     shortName = "m",
     description = "The System Message to pass to OpenAI"
-  ).required()
+  )
+    .required()
+
+  val exampleMessages: List<String> by parser.argument(
+    type = ArgType.String,
+    fullName = "example-messages",
+    description = "Example Messages to pass to OpenAI"
+  )
+    .optional()
+    .vararg()
 
   init {
     parser.parse(av)
+  }
+
+  override fun toString(): String {
+    return "Arguments(openAiAuthToken='$openAiAuthToken', slackAppToken='$slackAppToken', slackBotUserOAuthToken='$slackBotUserOAuthToken', botName='$botName', systemMessage='$systemMessage', exampleMessages=$exampleMessages)"
   }
 }
