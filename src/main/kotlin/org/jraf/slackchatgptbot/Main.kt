@@ -128,7 +128,7 @@ suspend fun main(av: Array<String>) {
           val botResponse =
             getBotResponse(
               openAIClient = openAIClient,
-              systemMessage = arguments.systemMessage,
+              systemMessage = arguments.systemMessage.trim(),
               exampleMessages = arguments.exampleMessages.mapIndexed { index, it -> Message(isAssistant = index % 2 == 1, it) },
               channelLastMessages = channelLastMessages
             )
@@ -149,21 +149,32 @@ private suspend fun getBotResponse(
   exampleMessages: List<Message>,
   channelLastMessages: List<Message>,
 ): String {
+  val messages = (exampleMessages + channelLastMessages).map {
+    if (it.isAssistant) {
+      OpenAIClient.Message.Assistant(it.text)
+    } else {
+      OpenAIClient.Message.User(it.text)
+    }
+  }
   return try {
     openAIClient.chatCompletion(
       model = "gpt-4",
-      systemMessage = systemMessage.trim(),
-      messages = (exampleMessages + channelLastMessages).map {
-        if (it.isAssistant) {
-          OpenAIClient.Message.Assistant(it.text)
-        } else {
-          OpenAIClient.Message.User(it.text)
-        }
-      },
+      systemMessage = systemMessage,
+      messages = messages,
     )
   } catch (e: Exception) {
-    LOGGER.warn("Could not get chat completion", e)
-    null
+    LOGGER.warn("Could not get chat completion with gpt-4, trying gpt-3.5-turbo", e)
+
+    try {
+      openAIClient.chatCompletion(
+        model = "gpt-3.5-turbo",
+        systemMessage = systemMessage,
+        messages = messages,
+      )
+    } catch (e: Exception) {
+      LOGGER.warn("Could not get chat completion with gpt-3.5-turbo, give up", e)
+      null
+    }
   }
     ?: PROBLEM_MESSAGE
 }
