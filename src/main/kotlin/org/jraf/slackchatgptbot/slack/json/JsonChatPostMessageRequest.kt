@@ -30,5 +30,5 @@ import kotlinx.serialization.Serializable
 data class JsonChatPostMessageRequest(
   val channel: String,
   val text: String,
+  val thread_ts: String?,
 )
-

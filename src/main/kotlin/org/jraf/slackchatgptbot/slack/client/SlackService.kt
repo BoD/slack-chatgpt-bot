@@ -138,7 +138,7 @@ class SlackService(
     charset: Charset,
   ): Any? {
     val frame = incoming.receive()
-    LOGGER.debug("Received frame: ${(frame as Frame.Text).readText()}")
+    LOGGER.debug("\n\n\n\n\n*************************\nReceived frame: ${(frame as Frame.Text).readText()}")
 
     if (!converter.isApplicable(frame)) {
       throw WebsocketDeserializeException(

@@ -67,8 +67,14 @@ private val MENTION_NAME_REGEX = Regex("@([a-zA-Z0-9_]+)")
 
 private const val PROBLEM_MESSAGE = "Oops there was a problem :( Check the logs."
 
+private const val MESSAGE_TOTAL_HISTORY_SIZE = 40
+private const val MESSAGE_COMPLETION_HISTORY_SIZE = 14
+
 private sealed interface Message {
+  val threadTs: String?
+
   data class UserMessage(
+    override val threadTs: String?,
     val ts: String,
     val date: Date = Date(),
     val text: String,
@@ -84,6 +90,7 @@ private sealed interface Message {
   }
 
   data class BotMessage(
+    override val threadTs: String?,
     val ts: String,
     val text: String,
   ) : Message {
@@ -95,6 +102,7 @@ private sealed interface Message {
   }
 
   data class UserEmojiReaction(
+    override val threadTs: String?,
     val date: Date = Date(),
     val emoji: String,
     val userName: String,
@@ -110,6 +118,7 @@ private sealed interface Message {
   }
 
   data class BotEmojiReaction(
+    override val threadTs: String?,
     val emoji: String,
   ) : Message {
     fun toOpenAiMessage(botName: String): String {
@@ -161,7 +170,7 @@ suspend fun main(av: Array<String>) {
     LOGGER.debug("Connecting to WebSocket webSocketUrl=$webSocketUrl")
 
     slackClient.openWebSocket(webSocketUrl) { event ->
-      LOGGER.debug("\n\n\n\nevent=$event")
+      LOGGER.debug("event=$event")
       when (event) {
         is JsonUnknownEvent -> {
           LOGGER.warn("Ignoring unknown event type=${event.type}")
@@ -172,21 +181,25 @@ suspend fun main(av: Array<String>) {
           val messageTs = event.item.ts
           val channel = event.item.channel
           val channelLastMessages = getChannelLastMessages(channel)
-          val messageTargetIdx =
-            channelLastMessages.indexOfFirst { it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs }
+          val messageTargetIdx = channelLastMessages.indexOfFirst {
+            it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs
+          }
           if (messageTargetIdx == -1) {
             LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
             return@openWebSocket
           }
+          val threadTs: String? = channelLastMessages[messageTargetIdx].threadTs
           val isBot = event.user == botMember.id
           val reactionMessage = if (isBot) {
             BotEmojiReaction(
+              threadTs = threadTs,
               emoji = event.reaction
             )
           } else {
             UserEmojiReaction(
               emoji = event.reaction,
               userName = allMembers[event.user]!!.name,
+              threadTs = threadTs
             )
           }
           channelLastMessages.add(messageTargetIdx + 1, reactionMessage)
@@ -205,6 +218,7 @@ suspend fun main(av: Array<String>) {
                   if (isBotExampleMessage) {
                     BotEmojiReaction(
                       emoji = text,
+                      threadTs = null,
                     )
                   } else {
                     UserMessage(
@@ -212,12 +226,14 @@ suspend fun main(av: Array<String>) {
                       date = yesterday(),
                       userName = text.substringBefore(" ").trim(),
                       text = text.substringAfter(" ").trim(),
+                      threadTs = null,
                     )
                   }
                 },
                 channelLastMessages = channelLastMessages
                   // Only include messages up to the message that was reacted to + the reaction itself
                   .subList(0, messageTargetIdx + 2)
+                  .filteredByThread(threadTs)
                   // And only take as much as MESSAGE_COMPLETION_HISTORY_SIZE messages
                   .takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
               )
@@ -265,11 +281,13 @@ suspend fun main(av: Array<String>) {
             if (isBot) {
               BotMessage(
                 ts = event.ts,
+                threadTs = event.thread_ts,
                 text = event.text
               )
             } else {
               UserMessage(
                 ts = event.ts,
+                threadTs = event.thread_ts,
                 userName = allMembers[event.user]!!.name,
                 text = event.text.replaceMentionsUserIdToName(allMembers)
               )
@@ -278,6 +296,7 @@ suspend fun main(av: Array<String>) {
           LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
 
           if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
+            val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.thread_ts)
             val botResponse =
               getBotResponse(
                 botName = arguments.botName,
@@ -288,22 +307,24 @@ suspend fun main(av: Array<String>) {
                   if (isBotExampleMessage) {
                     BotMessage(
                       ts = "",
+                      threadTs = null,
                       text = text,
                     )
                   } else {
                     UserMessage(
                       ts = "",
+                      threadTs = null,
                       date = yesterday(),
                       userName = text.substringBefore(" ").trim(),
                       text = text.substringAfter(" ").trim(),
                     )
                   }
                 },
-                channelLastMessages = channelLastMessages.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
+                channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
               )
                 .replaceMentionsNameToUserId(allMembers)
             LOGGER.debug("Bot response: $botResponse")
-            slackClient.chatPostMessage(event.channel, botResponse)
+            slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.thread_ts)
           }
         }
       }
@@ -313,8 +334,28 @@ suspend fun main(av: Array<String>) {
   }
 }
 
-private const val MESSAGE_TOTAL_HISTORY_SIZE = 40
-private const val MESSAGE_COMPLETION_HISTORY_SIZE = 14
+private fun List<Message>.filteredByThread(threadTs: String?): List<Message> {
+  val channelLastMessagesForThread = if (threadTs != null) {
+    val threadParentIdx =
+      indexOfFirst { it is UserMessage && it.ts == threadTs || it is BotMessage && it.ts == threadTs }
+    if (threadParentIdx == -1) {
+      LOGGER.debug("Thread $threadTs not found in channelLastMessages")
+      emptyList()
+    } else {
+      val messagesUpToAndIncludingParent = subList(0, threadParentIdx + 1)
+      val messagesForThread = filter {
+        it is UserMessage && it.threadTs == threadTs ||
+          it is BotMessage && it.threadTs == threadTs ||
+          it is UserEmojiReaction && it.threadTs == threadTs ||
+          it is BotEmojiReaction && it.threadTs == threadTs
+      }
+      messagesUpToAndIncludingParent + messagesForThread
+    }
+  } else {
+    filter { it.threadTs == null }
+  }
+  return channelLastMessagesForThread
+}
 
 private fun getChannelLastMessages(channel: String) = lastMessages.getOrPut(channel) { MaxSizedMutableList(MESSAGE_TOTAL_HISTORY_SIZE) }
 

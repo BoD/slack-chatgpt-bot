@@ -41,6 +41,7 @@ sealed interface JsonEvent {
     val channel: String,
     val text: String = "",
     val ts: String,
+    val thread_ts: String? = null,
     val subtype: String? = null,
     val previous_message: JsonMessageEditPreviousMessage? = null,
     val message: JsonMessageEditNewMessage? = null,

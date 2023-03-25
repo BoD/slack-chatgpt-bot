@@ -133,8 +133,11 @@ class SlackClient(private val clientConfiguration: ClientConfiguration) {
     service.openWebSocket(url, onMessage)
   }
 
-  suspend fun chatPostMessage(channel: String, text: String) {
-    service.chatPostMessage(clientConfiguration.botUserOAuthToken, JsonChatPostMessageRequest(channel = channel, text = text))
+  suspend fun chatPostMessage(channel: String, text: String, threadTs: String? = null) {
+    service.chatPostMessage(
+      clientConfiguration.botUserOAuthToken,
+      JsonChatPostMessageRequest(channel = channel, text = text, thread_ts = threadTs)
+    )
   }
 
   suspend fun reactionsAdd(channel: String, timestamp: String, name: String) {
