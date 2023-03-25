@@ -188,7 +188,12 @@ suspend fun main(av: Array<String>) {
             LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
             return@openWebSocket
           }
-          val threadTs: String? = channelLastMessages[messageTargetIdx].threadTs
+          val messageTarget = channelLastMessages[messageTargetIdx]
+          if (messageTarget is BotMessage) {
+            LOGGER.debug("Ignoring reaction added event because messageTarget=$messageTarget is a bot message")
+            return@openWebSocket
+          }
+          val threadTs: String? = messageTarget.threadTs
           val isBot = event.user == botMember.id
           val reactionMessage = if (isBot) {
             BotEmojiReaction(
