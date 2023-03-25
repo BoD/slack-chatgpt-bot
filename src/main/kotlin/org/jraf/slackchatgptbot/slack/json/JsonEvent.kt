@@ -33,33 +33,48 @@ import kotlinx.serialization.json.JsonClassDiscriminator
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 @JsonClassDiscriminator("type")
-sealed interface JsonEvent
+sealed interface JsonEvent {
+  @Serializable
+  @SerialName("message")
+  data class JsonMessageEvent(
+    val user: String? = null,
+    val channel: String,
+    val text: String = "",
+    val ts: String,
+    val subtype: String? = null,
+    val previous_message: JsonMessageEditPreviousMessage? = null,
+    val message: JsonMessageEditNewMessage? = null,
+  ) : JsonEvent {
+    @Serializable
+    data class JsonMessageEditPreviousMessage(
+      val ts: String,
+      val user: String,
+    )
 
-@Serializable
-@SerialName("message")
-data class JsonMessageEvent(
-  val user: String,
-  val channel: String,
-  val text: String = "",
-  val ts: String,
-) : JsonEvent
+    @Serializable
+    data class JsonMessageEditNewMessage(
+      val text: String = "",
+    )
+  }
 
-@Serializable
-@SerialName("reaction_added")
-data class JsonReactionAddedEvent(
-  val user: String,
-  val reaction: String = "",
-  val item: JsonReactionItem,
-) : JsonEvent
+  @Serializable
+  @SerialName("reaction_added")
+  data class JsonReactionAddedEvent(
+    val user: String,
+    val reaction: String = "",
+    val item: JsonReactionItem,
+    val event_ts: String,
+  ) : JsonEvent {
+    @Serializable
+    data class JsonReactionItem(
+      val type: String,
+      val channel: String = "",
+      val ts: String = "",
+    )
+  }
 
-@Serializable
-data class JsonReactionItem(
-  val type: String,
-  val channel: String = "",
-  val ts: String = "",
-)
-
-@Serializable
-data class JsonUnknownEvent(
-  val type: String,
-) : JsonEvent
+  @Serializable
+  data class JsonUnknownEvent(
+    val type: String,
+  ) : JsonEvent
+}

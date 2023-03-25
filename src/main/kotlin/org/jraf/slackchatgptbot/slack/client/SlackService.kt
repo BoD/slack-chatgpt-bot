@@ -27,7 +27,8 @@ package org.jraf.slackchatgptbot.slack.client
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.plugins.websocket.receiveDeserialized
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.plugins.websocket.converter
 import io.ktor.client.plugins.websocket.sendSerialized
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
@@ -37,7 +38,14 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.serialization.WebsocketContentConverter
+import io.ktor.serialization.WebsocketConverterNotFoundException
+import io.ktor.serialization.WebsocketDeserializeException
+import io.ktor.serialization.suitableCharset
+import io.ktor.util.reflect.typeInfo
+import io.ktor.utils.io.charsets.Charset
 import io.ktor.websocket.Frame
+import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.readText
 import org.jraf.slackchatgptbot.slack.json.JsonAcknowledge
 import org.jraf.slackchatgptbot.slack.json.JsonAppsConnectionsOpenResponse
@@ -100,7 +108,7 @@ class SlackService(
       LOGGER.info("WebSocket in: ${helloMessage.readText()}")
       while (true) {
         val payloadEnvelope = try {
-          receiveDeserialized<JsonPayloadEnvelope>()
+          myReceiveDeserialized<JsonPayloadEnvelope>()
         } catch (e: Exception) {
           LOGGER.error("Error while receiving message", e)
           break
@@ -114,4 +122,52 @@ class SlackService(
     }
   }
 
+
+  private suspend inline fun <reified T> DefaultClientWebSocketSession.myReceiveDeserialized(): T {
+    val converter = converter
+      ?: throw WebsocketConverterNotFoundException("No converter was found for websocket")
+
+    return myReceiveDeserializedBase<T>(
+      converter,
+      call.request.headers.suitableCharset()
+    ) as T
+  }
+
+  private suspend inline fun <reified T> WebSocketSession.myReceiveDeserializedBase(
+    converter: WebsocketContentConverter,
+    charset: Charset,
+  ): Any? {
+    val frame = incoming.receive()
+    LOGGER.debug("Received frame: ${(frame as Frame.Text).readText()}")
+
+    if (!converter.isApplicable(frame)) {
+      throw WebsocketDeserializeException(
+        "Converter doesn't support frame type ${frame.frameType.name}",
+        frame = frame
+      )
+    }
+
+    val typeInfo = typeInfo<T>()
+    val result = converter.deserialize(
+      charset = charset,
+      typeInfo = typeInfo,
+      content = frame
+    )
+
+    if (result is T) return result
+    if (result == null) {
+      if (typeInfo.kotlinType?.isMarkedNullable == true) return null
+      throw WebsocketDeserializeException("Frame has null content", frame = frame)
+    }
+
+    throw WebsocketDeserializeException(
+      "Can't deserialize value : expected value of type ${T::class.simpleName}," +
+        " got ${result::class.simpleName}",
+      frame = frame
+    )
+  }
+
 }
+
+
+

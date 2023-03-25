@@ -47,7 +47,6 @@ import org.jraf.slackchatgptbot.slack.json.JsonChatPostMessageRequest
 import org.jraf.slackchatgptbot.slack.json.JsonEvent
 import org.jraf.slackchatgptbot.slack.json.JsonMember
 import org.jraf.slackchatgptbot.slack.json.JsonReactionAddRequest
-import org.jraf.slackchatgptbot.slack.json.JsonUnknownEvent
 import org.slf4j.LoggerFactory
 
 class SlackClient(private val clientConfiguration: ClientConfiguration) {
@@ -65,7 +64,7 @@ class SlackClient(private val clientConfiguration: ClientConfiguration) {
       useAlternativeNames = false
       serializersModule = SerializersModule {
         polymorphic(JsonEvent::class) {
-          defaultDeserializer { JsonUnknownEvent.serializer() }
+          defaultDeserializer { JsonEvent.JsonUnknownEvent.serializer() }
         }
       }
     }
