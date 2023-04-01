@@ -3,7 +3,6 @@ import com.bmuschko.gradle.docker.tasks.image.Dockerfile
 
 plugins {
   kotlin("jvm")
-  kotlin("kapt")
   kotlin("plugin.serialization")
   application
   id("com.bmuschko.docker-java-application")
@@ -34,14 +33,7 @@ dependencies {
 
   implementation(KotlinX.serialization.json)
 
-
-  implementation(Square.okHttp3.okHttp)
   implementation(Square.okHttp3.loggingInterceptor)
-
-  implementation(Square.retrofit2.retrofit)
-  implementation(Square.retrofit2.converter.moshi)
-  implementation(Square.moshi)
-  kapt(Square.Moshi.kotlinCodegen)
 
   implementation(KotlinX.cli)
 
@@ -54,6 +46,8 @@ application {
 
 docker {
   javaApplication {
+    // Use OpenJ9 instead of the default one
+    baseImage.set("adoptopenjdk/openjdk11-openj9:x86_64-ubuntu-jre-11.0.18_10_openj9-0.36.1")
     maintainer.set("BoD <BoD@JRAF.org>")
     ports.set(emptyList())
     images.add("bodlulu/${rootProject.name}:latest")
@@ -70,13 +64,16 @@ tasks.withType<DockerBuildImage> {
 }
 
 tasks.withType<Dockerfile> {
-  val originalInstructions = instructions.get().toMutableList()
-  val fromInstructionIndex = originalInstructions
-    .indexOfFirst { item -> item.keyword == Dockerfile.FromInstruction.KEYWORD }
-  originalInstructions.removeAt(fromInstructionIndex)
-  val baseImage = Dockerfile.FromInstruction(Dockerfile.From("adoptopenjdk/openjdk11-openj9:x86_64-ubuntu-jre-11.0.18_10_openj9-0.36.1"))
-  originalInstructions.add(0, baseImage)
-  instructions.set(originalInstructions)
+  // See https://github.com/bmuschko/gradle-docker-plugin/issues/1173
+  instructions.set(
+    instructions.get().map { item ->
+      if (item.keyword == Dockerfile.EntryPointInstruction.KEYWORD) {
+        Dockerfile.GenericInstruction("""ENTRYPOINT ["sh", "-c", "java ${'$'}JAVA_OPTS -Xms16m -Xmx128m -cp /app/resources:/app/classes:/app/libs/* org.jraf.slackchatgptbot.MainKt ${'$'}0 \"${'$'}@\""]""")
+      } else {
+        item
+      }
+    }
+  )
 
   environmentVariable("MALLOC_ARENA_MAX", "4")
 }

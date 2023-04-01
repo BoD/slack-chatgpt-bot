@@ -68,7 +68,7 @@ private val MENTION_NAME_REGEX = Regex("@([a-zA-Z0-9_]+)")
 private const val PROBLEM_MESSAGE = "Oops there was a problem :( Check the logs."
 
 private const val MESSAGE_TOTAL_HISTORY_SIZE = 40
-private const val MESSAGE_COMPLETION_HISTORY_SIZE = 14
+private const val MESSAGE_COMPLETION_HISTORY_SIZE = 16
 
 private sealed interface Message {
   val threadTs: String?
