@@ -68,7 +68,7 @@ tasks.withType<Dockerfile> {
   instructions.set(
     instructions.get().map { item ->
       if (item.keyword == Dockerfile.EntryPointInstruction.KEYWORD) {
-        Dockerfile.GenericInstruction("""ENTRYPOINT ["sh", "-c", "java ${'$'}JAVA_OPTS -Xms16m -Xmx128m -cp /app/resources:/app/classes:/app/libs/* org.jraf.slackchatgptbot.MainKt ${'$'}0 \"${'$'}@\""]""")
+        Dockerfile.GenericInstruction("""ENTRYPOINT ["java", "-Xms16m", "-Xmx128m", "-cp", "/app/resources:/app/classes:/app/libs/*", "org.jraf.slackchatgptbot.MainKt"]""")
       } else {
         item
       }
