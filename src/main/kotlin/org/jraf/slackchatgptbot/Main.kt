@@ -203,7 +203,7 @@ suspend fun main(av: Array<String>) {
           } else {
             UserEmojiReaction(
               emoji = event.reaction,
-              userName = allMembers[event.user]!!.name,
+              userName = allMembers[event.user]!!.profile.display_name,
               threadTs = threadTs
             )
           }
@@ -293,7 +293,7 @@ suspend fun main(av: Array<String>) {
               UserMessage(
                 ts = event.ts,
                 threadTs = event.thread_ts,
-                userName = allMembers[event.user]!!.name,
+                userName = allMembers[event.user]!!.profile.display_name,
                 text = event.text.replaceMentionsUserIdToName(allMembers)
               )
             }
@@ -412,7 +412,7 @@ private fun String.replaceMentionsUserIdToName(allMembers: Map<String, JsonMembe
       LOGGER.warn("Could not find member with id $memberId")
       matchResult.value
     } else {
-      "@${member.name}"
+      "@${member.profile.display_name}"
     }
   }
 }
@@ -420,7 +420,7 @@ private fun String.replaceMentionsUserIdToName(allMembers: Map<String, JsonMembe
 private fun String.replaceMentionsNameToUserId(allMembers: Map<String, JsonMember>): String {
   return replace(MENTION_NAME_REGEX) { matchResult ->
     val memberName = matchResult.groupValues[1]
-    val member = allMembers.values.firstOrNull { it.name == memberName }
+    val member = allMembers.values.firstOrNull { it.profile.display_name == memberName }
     if (member == null) {
       LOGGER.warn("Could not find member with name $memberName")
       matchResult.value

@@ -32,4 +32,11 @@ data class JsonMember(
   val name: String,
   val real_name: String? = null,
   val is_bot: Boolean,
-)
+  val profile: JsonProfile,
+) {
+  @Serializable
+  data class JsonProfile(
+    val real_name: String,
+    val display_name: String,
+  )
+}
