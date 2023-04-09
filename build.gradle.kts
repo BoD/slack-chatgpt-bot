@@ -1,5 +1,4 @@
 import com.bmuschko.gradle.docker.tasks.image.DockerBuildImage
-import com.bmuschko.gradle.docker.tasks.image.Dockerfile
 
 plugins {
   kotlin("jvm")
@@ -63,21 +62,6 @@ docker {
 
 tasks.withType<DockerBuildImage> {
   platform.set("linux/amd64")
-}
-
-tasks.withType<Dockerfile> {
-  // See https://github.com/bmuschko/gradle-docker-plugin/issues/1173
-  instructions.set(
-    instructions.get().map { item ->
-      if (item.keyword == Dockerfile.EntryPointInstruction.KEYWORD) {
-        Dockerfile.GenericInstruction("""ENTRYPOINT ["java", "-Xms16m", "-Xmx128m", "-cp", "/app/resources:/app/classes:/app/libs/*", "org.jraf.slackchatgptbot.MainKt"]""")
-      } else {
-        item
-      }
-    }
-  )
-
-  environmentVariable("MALLOC_ARENA_MAX", "4")
 }
 
 // `./gradlew refreshVersions` to update dependencies
