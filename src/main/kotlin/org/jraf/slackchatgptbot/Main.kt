@@ -60,7 +60,7 @@ private val LOGGER = run {
   LoggerFactory.getLogger("Main")
 }
 
-private const val FAKE_BOT_RESPONSES = true
+private const val FAKE_BOT_RESPONSES = false
 
 private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
