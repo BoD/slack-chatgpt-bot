@@ -12,6 +12,7 @@ group = "org.jraf"
 version = "1.0.0"
 
 repositories {
+  mavenLocal()
   mavenCentral()
 }
 
@@ -33,7 +34,8 @@ dependencies {
 
   implementation(KotlinX.serialization.json)
 
-  implementation(Square.okHttp3.loggingInterceptor)
+  // Slack
+  implementation("org.jraf.klibslack", "klibslack", "_")
 
   implementation(KotlinX.cli)
 

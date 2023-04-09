@@ -27,20 +27,22 @@
 package org.jraf.slackchatgptbot
 
 import kotlinx.coroutines.delay
+import org.jraf.klibslack.client.SlackClient
+import org.jraf.klibslack.client.configuration.ClientConfiguration
+import org.jraf.klibslack.client.configuration.HttpConfiguration
+import org.jraf.klibslack.client.configuration.HttpLoggingLevel
+import org.jraf.klibslack.model.Member
+import org.jraf.klibslack.model.MessageAddedEvent
+import org.jraf.klibslack.model.MessageChangedEvent
+import org.jraf.klibslack.model.MessageDeletedEvent
+import org.jraf.klibslack.model.ReactionAddedEvent
+import org.jraf.klibslack.model.UnknownEvent
 import org.jraf.slackchatgptbot.Message.BotEmojiReaction
 import org.jraf.slackchatgptbot.Message.BotMessage
 import org.jraf.slackchatgptbot.Message.UserEmojiReaction
 import org.jraf.slackchatgptbot.Message.UserMessage
 import org.jraf.slackchatgptbot.arguments.Arguments
 import org.jraf.slackchatgptbot.openai.client.OpenAIClient
-import org.jraf.slackchatgptbot.slack.client.SlackClient
-import org.jraf.slackchatgptbot.slack.client.configuration.ClientConfiguration
-import org.jraf.slackchatgptbot.slack.client.configuration.HttpConfiguration
-import org.jraf.slackchatgptbot.slack.client.configuration.HttpLoggingLevel
-import org.jraf.slackchatgptbot.slack.json.JsonEvent.JsonMessageEvent
-import org.jraf.slackchatgptbot.slack.json.JsonEvent.JsonReactionAddedEvent
-import org.jraf.slackchatgptbot.slack.json.JsonEvent.JsonUnknownEvent
-import org.jraf.slackchatgptbot.slack.json.JsonMember
 import org.jraf.slackchatgptbot.util.MaxSizedMutableList
 import org.jraf.slackchatgptbot.util.yesterday
 import org.slf4j.LoggerFactory
@@ -58,7 +60,7 @@ private val LOGGER = run {
   LoggerFactory.getLogger("Main")
 }
 
-private const val FAKE_BOT_RESPONSES = false
+private const val FAKE_BOT_RESPONSES = true
 
 private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
@@ -149,7 +151,7 @@ suspend fun main(av: Array<String>) {
     )
   )
 
-  val slackClient = SlackClient(
+  val slackClient = SlackClient.newInstance(
     ClientConfiguration(
       appToken = arguments.slackAppToken,
       botUserOAuthToken = arguments.slackBotUserOAuthToken,
@@ -161,7 +163,7 @@ suspend fun main(av: Array<String>) {
   )
 
   LOGGER.info("Getting the list of all members (that could take a while)...")
-  val allMembers = slackClient.getAllMembers().associateBy { it.id }
+  val allMembers: Map<String, Member> = slackClient.getAllMembers().associateBy { it.id }
   LOGGER.debug("allMembers=$allMembers")
   val botMember = allMembers.values.first { it.name.equals(arguments.botName, ignoreCase = true) }
 
@@ -172,14 +174,14 @@ suspend fun main(av: Array<String>) {
     slackClient.openWebSocket(webSocketUrl) { event ->
       LOGGER.debug("event=$event")
       when (event) {
-        is JsonUnknownEvent -> {
+        is UnknownEvent -> {
           LOGGER.warn("Ignoring unknown event type=${event.type}")
           return@openWebSocket
         }
 
-        is JsonReactionAddedEvent -> {
-          val messageTs = event.item.ts
-          val channel = event.item.channel
+        is ReactionAddedEvent -> {
+          val messageTs = event.ts
+          val channel = event.channel
           val channelLastMessages = getChannelLastMessages(channel)
           val messageTargetIdx = channelLastMessages.indexOfFirst {
             it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs
@@ -203,7 +205,7 @@ suspend fun main(av: Array<String>) {
           } else {
             UserEmojiReaction(
               emoji = event.reaction,
-              userName = allMembers[event.user]!!.profile.display_name,
+              userName = allMembers[event.user]!!.displayName,
               threadTs = threadTs
             )
           }
@@ -257,8 +259,8 @@ suspend fun main(av: Array<String>) {
           }
         }
 
-        is JsonMessageEvent -> {
-          if (event.text.isBlank() && event.message?.text.isNullOrBlank()) {
+        is MessageAddedEvent -> {
+          if (event.text.isBlank()) {
             LOGGER.debug("Ignoring message event because text is blank (probably an image)")
             return@openWebSocket
           }
@@ -268,32 +270,19 @@ suspend fun main(av: Array<String>) {
           }
 
           val channelLastMessages = getChannelLastMessages(event.channel)
-          if (event.subtype == "message_changed") {
-            LOGGER.debug("Message changed event")
-            val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.previous_message!!.ts }
-            if (originalMessageIdx == -1) {
-              LOGGER.debug("Ignoring message changed event because previous_message.ts=${event.previous_message!!.ts} was not found in lastMessages")
-              return@openWebSocket
-            }
-            val updatedMessage = (channelLastMessages[originalMessageIdx] as UserMessage).copy(text = event.message!!.text)
-            channelLastMessages[originalMessageIdx] = updatedMessage
-            LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
-            return@openWebSocket
-          }
-
           val isBot = event.user == botMember.id
           channelLastMessages.add(
             if (isBot) {
               BotMessage(
                 ts = event.ts,
-                threadTs = event.thread_ts,
+                threadTs = event.threadTs,
                 text = event.text
               )
             } else {
               UserMessage(
                 ts = event.ts,
-                threadTs = event.thread_ts,
-                userName = allMembers[event.user]!!.profile.display_name,
+                threadTs = event.threadTs,
+                userName = allMembers[event.user]!!.displayName,
                 text = event.text.replaceMentionsUserIdToName(allMembers)
               )
             }
@@ -301,7 +290,7 @@ suspend fun main(av: Array<String>) {
           LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
 
           if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
-            val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.thread_ts)
+            val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.threadTs)
             val botResponse =
               getBotResponse(
                 botName = arguments.botName,
@@ -329,8 +318,37 @@ suspend fun main(av: Array<String>) {
               )
                 .replaceMentionsNameToUserId(allMembers)
             LOGGER.debug("Bot response: $botResponse")
-            slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.thread_ts)
+            slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.threadTs)
           }
+        }
+
+        is MessageChangedEvent -> {
+          LOGGER.debug("Message changed event")
+          if (event.newText.isBlank()) {
+            LOGGER.debug("Ignoring message event because text is blank (probably an image)")
+            return@openWebSocket
+          }
+          val channelLastMessages = getChannelLastMessages(event.channel)
+          val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.changedTs }
+          if (originalMessageIdx == -1) {
+            LOGGER.debug("Ignoring message changed event because previous_message.ts=${event.changedTs} was not found in lastMessages")
+            return@openWebSocket
+          }
+          val updatedMessage = (channelLastMessages[originalMessageIdx] as UserMessage).copy(text = event.newText)
+          channelLastMessages[originalMessageIdx] = updatedMessage
+          LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+        }
+
+        is MessageDeletedEvent -> {
+          LOGGER.debug("Message deleted event")
+          val channelLastMessages = getChannelLastMessages(event.channel)
+          val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.deletedTs }
+          if (originalMessageIdx == -1) {
+            LOGGER.debug("Ignoring message deleted event because previous_message.ts=${event.deletedTs} was not found in lastMessages")
+            return@openWebSocket
+          }
+          channelLastMessages.removeAt(originalMessageIdx)
+          LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
         }
       }
     }
@@ -404,7 +422,7 @@ private suspend fun getBotResponse(
     ?: PROBLEM_MESSAGE
 }
 
-private fun String.replaceMentionsUserIdToName(allMembers: Map<String, JsonMember>): String {
+private fun String.replaceMentionsUserIdToName(allMembers: Map<String, Member>): String {
   return replace(MENTION_ID_REGEX) { matchResult ->
     val memberId = matchResult.groupValues[1]
     val member = allMembers[memberId]
@@ -412,15 +430,15 @@ private fun String.replaceMentionsUserIdToName(allMembers: Map<String, JsonMembe
       LOGGER.warn("Could not find member with id $memberId")
       matchResult.value
     } else {
-      "@${member.profile.display_name}"
+      "@${member.displayName}"
     }
   }
 }
 
-private fun String.replaceMentionsNameToUserId(allMembers: Map<String, JsonMember>): String {
+private fun String.replaceMentionsNameToUserId(allMembers: Map<String, Member>): String {
   return replace(MENTION_NAME_REGEX) { matchResult ->
     val memberName = matchResult.groupValues[1]
-    val member = allMembers.values.firstOrNull { it.profile.display_name == memberName }
+    val member = allMembers.values.firstOrNull { it.displayName == memberName }
     if (member == null) {
       LOGGER.warn("Could not find member with name $memberName")
       matchResult.value
