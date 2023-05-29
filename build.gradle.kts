@@ -15,6 +15,10 @@ repositories {
   mavenCentral()
 }
 
+kotlin {
+  jvmToolchain(11)
+}
+
 dependencies {
   // Slf4j
   implementation("org.slf4j", "slf4j-api", "_")
@@ -54,6 +58,7 @@ docker {
     images.add("bodlulu/${rootProject.name}:latest")
     jvmArgs.set(listOf("-Xms16m", "-Xmx128m"))
   }
+
   registryCredentials {
     username.set(System.getenv("DOCKER_USERNAME"))
     password.set(System.getenv("DOCKER_PASSWORD"))

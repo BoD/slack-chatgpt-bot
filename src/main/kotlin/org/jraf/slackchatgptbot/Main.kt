@@ -168,192 +168,206 @@ suspend fun main(av: Array<String>) {
   val botMember = allMembers.values.first { it.name.equals(arguments.botName, ignoreCase = true) }
 
   while (true) {
-    val webSocketUrl = slackClient.appsConnectionsOpen()
-    LOGGER.debug("Connecting to WebSocket webSocketUrl=$webSocketUrl")
-
-    slackClient.openWebSocket(webSocketUrl) { event ->
-      LOGGER.debug("event=$event")
-      when (event) {
-        is UnknownEvent -> {
-          LOGGER.warn("Ignoring unknown event type=${event.type}")
-          return@openWebSocket
-        }
-
-        is ReactionAddedEvent -> {
-          val messageTs = event.ts
-          val channel = event.channel
-          val channelLastMessages = getChannelLastMessages(channel)
-          val messageTargetIdx = channelLastMessages.indexOfFirst {
-            it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs
-          }
-          if (messageTargetIdx == -1) {
-            LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
-            return@openWebSocket
-          }
-          val messageTarget = channelLastMessages[messageTargetIdx]
-          if (messageTarget is BotMessage) {
-            LOGGER.debug("Ignoring reaction added event because messageTarget=$messageTarget is a bot message")
-            return@openWebSocket
-          }
-          val threadTs: String? = messageTarget.threadTs
-          val isBot = event.user == botMember.id
-          val reactionMessage = if (isBot) {
-            BotEmojiReaction(
-              threadTs = threadTs,
-              emoji = event.reaction
-            )
-          } else {
-            UserEmojiReaction(
-              emoji = event.reaction,
-              userName = allMembers[event.user]!!.displayName,
-              threadTs = threadTs
-            )
-          }
-          channelLastMessages.add(messageTargetIdx + 1, reactionMessage)
-          LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
-
-          val randomInt = Random.nextInt(3)
-          LOGGER.debug("randomInt=$randomInt")
-          if (!isBot && randomInt <= 1) {
-            val botResponse =
-              getBotResponse(
-                botName = arguments.botName,
-                openAIClient = openAIClient,
-                systemMessage = arguments.reactionsSystemMessage.trim(),
-                exampleMessages = arguments.reactionsExampleMessages.mapIndexed { index, text ->
-                  val isBotExampleMessage = index % 2 == 1
-                  if (isBotExampleMessage) {
-                    BotEmojiReaction(
-                      emoji = text,
-                      threadTs = null,
-                    )
-                  } else {
-                    UserMessage(
-                      ts = "",
-                      date = yesterday(),
-                      userName = text.substringBefore(" ").trim(),
-                      text = text.substringAfter(" ").trim(),
-                      threadTs = null,
-                    )
-                  }
-                },
-                channelLastMessages = channelLastMessages
-                  // Only include messages up to the message that was reacted to + the reaction itself
-                  .subList(0, messageTargetIdx + 2)
-                  .filteredByThread(threadTs)
-                  // And only take as much as MESSAGE_COMPLETION_HISTORY_SIZE messages
-                  .takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
-              )
-            LOGGER.debug("Bot response: $botResponse")
-            val emojis = botResponse.split(" ")
-              .filter { it.startsWith(":") && it.endsWith(":") }
-              .map { it.substring(1, it.length - 1) }
-            LOGGER.debug("Emojis: $emojis")
-            for (emoji in emojis) {
-              try {
-                slackClient.reactionsAdd(channel = channel, name = emoji, timestamp = messageTs)
-              } catch (e: Exception) {
-                LOGGER.warn("Error while adding reaction $emoji", e)
-              }
-            }
-          }
-        }
-
-        is MessageAddedEvent -> {
-          if (event.text.isBlank()) {
-            LOGGER.debug("Ignoring message event because text is blank (probably an image)")
-            return@openWebSocket
-          }
-          if (event.text == PROBLEM_MESSAGE) {
-            LOGGER.debug("Ignoring problem message")
-            return@openWebSocket
-          }
-
-          val channelLastMessages = getChannelLastMessages(event.channel)
-          val isBot = event.user == botMember.id
-          channelLastMessages.add(
-            if (isBot) {
-              BotMessage(
-                ts = event.ts,
-                threadTs = event.threadTs,
-                text = event.text
-              )
-            } else {
-              UserMessage(
-                ts = event.ts,
-                threadTs = event.threadTs,
-                userName = allMembers[event.user]!!.displayName,
-                text = event.text.replaceMentionsUserIdToName(allMembers)
-              )
-            }
-          )
-          LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
-
-          if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
-            val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.threadTs)
-            val botResponse =
-              getBotResponse(
-                botName = arguments.botName,
-                openAIClient = openAIClient,
-                systemMessage = arguments.messagesSystemMessage.trim(),
-                exampleMessages = arguments.messagesExampleMessages.mapIndexed { index, text ->
-                  val isBotExampleMessage = index % 2 == 1
-                  if (isBotExampleMessage) {
-                    BotMessage(
-                      ts = "",
-                      threadTs = null,
-                      text = text,
-                    )
-                  } else {
-                    UserMessage(
-                      ts = "",
-                      threadTs = null,
-                      date = yesterday(),
-                      userName = text.substringBefore(" ").trim(),
-                      text = text.substringAfter(" ").trim(),
-                    )
-                  }
-                },
-                channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
-              )
-                .replaceMentionsNameToUserId(allMembers)
-            LOGGER.debug("Bot response: $botResponse")
-            slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.threadTs)
-          }
-        }
-
-        is MessageChangedEvent -> {
-          LOGGER.debug("Message changed event")
-          if (event.newText.isBlank()) {
-            LOGGER.debug("Ignoring message event because text is blank (probably an image)")
-            return@openWebSocket
-          }
-          val channelLastMessages = getChannelLastMessages(event.channel)
-          val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.changedTs }
-          if (originalMessageIdx == -1) {
-            LOGGER.debug("Ignoring message changed event because previous_message.ts=${event.changedTs} was not found in lastMessages")
-            return@openWebSocket
-          }
-          val updatedMessage = (channelLastMessages[originalMessageIdx] as UserMessage).copy(text = event.newText)
-          channelLastMessages[originalMessageIdx] = updatedMessage
-          LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
-        }
-
-        is MessageDeletedEvent -> {
-          LOGGER.debug("Message deleted event")
-          val channelLastMessages = getChannelLastMessages(event.channel)
-          val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.deletedTs }
-          if (originalMessageIdx == -1) {
-            LOGGER.debug("Ignoring message deleted event because previous_message.ts=${event.deletedTs} was not found in lastMessages")
-            return@openWebSocket
-          }
-          channelLastMessages.removeAt(originalMessageIdx)
-          LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
-        }
-      }
+    try {
+      mainLoop(slackClient, botMember, allMembers, arguments, openAIClient)
+    } catch (e: Exception) {
+      LOGGER.error("Exception caught in main loop", e)
     }
     LOGGER.debug("Was disconnected, reconnecting...")
     delay(10_000)
+  }
+}
+
+private suspend fun mainLoop(
+  slackClient: SlackClient,
+  botMember: Member,
+  allMembers: Map<String, Member>,
+  arguments: Arguments,
+  openAIClient: OpenAIClient,
+) {
+  val webSocketUrl = slackClient.appsConnectionsOpen()
+  LOGGER.debug("Connecting to WebSocket webSocketUrl=$webSocketUrl")
+
+  slackClient.openWebSocket(webSocketUrl) { event ->
+    LOGGER.debug("event=$event")
+    when (event) {
+      is UnknownEvent -> {
+        LOGGER.warn("Ignoring unknown event type=${event.type}")
+        return@openWebSocket
+      }
+
+      is ReactionAddedEvent -> {
+        val messageTs = event.ts
+        val channel = event.channel
+        val channelLastMessages = getChannelLastMessages(channel)
+        val messageTargetIdx = channelLastMessages.indexOfFirst {
+          it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs
+        }
+        if (messageTargetIdx == -1) {
+          LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
+          return@openWebSocket
+        }
+        val messageTarget = channelLastMessages[messageTargetIdx]
+        if (messageTarget is BotMessage) {
+          LOGGER.debug("Ignoring reaction added event because messageTarget=$messageTarget is a bot message")
+          return@openWebSocket
+        }
+        val threadTs: String? = messageTarget.threadTs
+        val isBot = event.user == botMember.id
+        val reactionMessage = if (isBot) {
+          BotEmojiReaction(
+            threadTs = threadTs,
+            emoji = event.reaction
+          )
+        } else {
+          UserEmojiReaction(
+            emoji = event.reaction,
+            userName = allMembers[event.user]!!.displayName,
+            threadTs = threadTs
+          )
+        }
+        channelLastMessages.add(messageTargetIdx + 1, reactionMessage)
+        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+
+        val randomInt = Random.nextInt(3)
+        LOGGER.debug("randomInt=$randomInt")
+        if (!isBot && randomInt <= 1) {
+          val botResponse =
+            getBotResponse(
+              botName = arguments.botName,
+              openAIClient = openAIClient,
+              systemMessage = arguments.reactionsSystemMessage.trim(),
+              exampleMessages = arguments.reactionsExampleMessages.mapIndexed { index, text ->
+                val isBotExampleMessage = index % 2 == 1
+                if (isBotExampleMessage) {
+                  BotEmojiReaction(
+                    emoji = text,
+                    threadTs = null,
+                  )
+                } else {
+                  UserMessage(
+                    ts = "",
+                    date = yesterday(),
+                    userName = text.substringBefore(" ").trim(),
+                    text = text.substringAfter(" ").trim(),
+                    threadTs = null,
+                  )
+                }
+              },
+              channelLastMessages = channelLastMessages
+                // Only include messages up to the message that was reacted to + the reaction itself
+                .subList(0, messageTargetIdx + 2)
+                .filteredByThread(threadTs)
+                // And only take as much as MESSAGE_COMPLETION_HISTORY_SIZE messages
+                .takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
+            )
+          LOGGER.debug("Bot response: $botResponse")
+          val emojis = botResponse.split(" ")
+            .filter { it.startsWith(":") && it.endsWith(":") }
+            .map { it.substring(1, it.length - 1) }
+          LOGGER.debug("Emojis: $emojis")
+          for (emoji in emojis) {
+            try {
+              slackClient.reactionsAdd(channel = channel, name = emoji, timestamp = messageTs)
+            } catch (e: Exception) {
+              LOGGER.warn("Error while adding reaction $emoji", e)
+            }
+          }
+        }
+      }
+
+      is MessageAddedEvent -> {
+        if (event.text.isBlank()) {
+          LOGGER.debug("Ignoring message event because text is blank (probably an image)")
+          return@openWebSocket
+        }
+        if (event.text == PROBLEM_MESSAGE) {
+          LOGGER.debug("Ignoring problem message")
+          return@openWebSocket
+        }
+
+        val channelLastMessages = getChannelLastMessages(event.channel)
+        val isBot = event.user == botMember.id
+        channelLastMessages.add(
+          if (isBot) {
+            BotMessage(
+              ts = event.ts,
+              threadTs = event.threadTs,
+              text = event.text
+            )
+          } else {
+            UserMessage(
+              ts = event.ts,
+              threadTs = event.threadTs,
+              userName = allMembers[event.user]!!.displayName,
+              text = event.text.replaceMentionsUserIdToName(allMembers)
+            )
+          }
+        )
+        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+
+        if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
+          val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.threadTs)
+          val botResponse =
+            getBotResponse(
+              botName = arguments.botName,
+              openAIClient = openAIClient,
+              systemMessage = arguments.messagesSystemMessage.trim(),
+              exampleMessages = arguments.messagesExampleMessages.mapIndexed { index, text ->
+                val isBotExampleMessage = index % 2 == 1
+                if (isBotExampleMessage) {
+                  BotMessage(
+                    ts = "",
+                    threadTs = null,
+                    text = text,
+                  )
+                } else {
+                  UserMessage(
+                    ts = "",
+                    threadTs = null,
+                    date = yesterday(),
+                    userName = text.substringBefore(" ").trim(),
+                    text = text.substringAfter(" ").trim(),
+                  )
+                }
+              },
+              channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
+            )
+              .replaceMentionsNameToUserId(allMembers)
+          LOGGER.debug("Bot response: $botResponse")
+          slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.threadTs)
+        }
+      }
+
+      is MessageChangedEvent -> {
+        LOGGER.debug("Message changed event")
+        if (event.newText.isBlank()) {
+          LOGGER.debug("Ignoring message event because text is blank (probably an image)")
+          return@openWebSocket
+        }
+        val channelLastMessages = getChannelLastMessages(event.channel)
+        val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.changedTs }
+        if (originalMessageIdx == -1) {
+          LOGGER.debug("Ignoring message changed event because previous_message.ts=${event.changedTs} was not found in lastMessages")
+          return@openWebSocket
+        }
+        val updatedMessage = (channelLastMessages[originalMessageIdx] as UserMessage).copy(text = event.newText)
+        channelLastMessages[originalMessageIdx] = updatedMessage
+        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+      }
+
+      is MessageDeletedEvent -> {
+        LOGGER.debug("Message deleted event")
+        val channelLastMessages = getChannelLastMessages(event.channel)
+        val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.deletedTs }
+        if (originalMessageIdx == -1) {
+          LOGGER.debug("Ignoring message deleted event because previous_message.ts=${event.deletedTs} was not found in lastMessages")
+          return@openWebSocket
+        }
+        channelLastMessages.removeAt(originalMessageIdx)
+        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+      }
+    }
   }
 }
 
