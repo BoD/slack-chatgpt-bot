@@ -69,8 +69,8 @@ private val MENTION_NAME_REGEX = Regex("@([a-zA-Z0-9_]+)")
 
 private const val PROBLEM_MESSAGE = "Oops there was a problem :( Check the logs."
 
-private const val MESSAGE_TOTAL_HISTORY_SIZE = 40
-private const val MESSAGE_COMPLETION_HISTORY_SIZE = 16
+private const val MESSAGE_TOTAL_HISTORY_SIZE = 100
+private const val MESSAGE_COMPLETION_HISTORY_SIZE = 30
 
 private sealed interface Message {
   val threadTs: String?
@@ -415,7 +415,7 @@ private suspend fun getBotResponse(
   if (FAKE_BOT_RESPONSES) return "Fake bot response"
   return try {
     openAIClient.chatCompletion(
-      model = "gpt-4",
+      model = "gpt-4-1106-preview",
       systemMessage = systemMessage,
       messages = messages,
     )
