@@ -23,18 +23,24 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package org.jraf.slackchatgptbot.openai.json
+package org.jraf.slackchatgptbot.openai.json.chat.completions
 
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class JsonMessage(
-  val role: String,
-  val content: String,
+data class JsonChatCompletionsResponse(
+  val id: String,
+  val choices: List<JsonChoice>,
+)
+
+@Serializable
+data class JsonChoice(
+  val message: JsonChatCompletionsMessage,
+  val finish_reason: String?,
 ) {
   companion object {
-    const val ROLE_USER = "user"
-    const val ROLE_SYSTEM = "system"
-    const val ROLE_ASSISTANT = "assistant"
+    const val FINISH_REASON_STOP = "stop"
+    const val FINISH_REASON_LENGTH = "length"
+    const val FINISH_REASON_CONTENT_FILTER = "content_filter"
   }
 }

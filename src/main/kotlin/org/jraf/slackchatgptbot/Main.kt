@@ -137,9 +137,9 @@ private sealed interface Message {
 private val lastMessages = mutableMapOf<String, MutableList<Message>>()
 
 suspend fun main(av: Array<String>) {
-  LOGGER.info("Hello, World!")
+  logi("Hello, World!")
   val arguments = Arguments(av)
-  LOGGER.info("arguments=$arguments")
+  logi("arguments=$arguments")
 
   val openAIClient = OpenAIClient(
     org.jraf.slackchatgptbot.openai.client.configuration.ClientConfiguration(
@@ -162,18 +162,18 @@ suspend fun main(av: Array<String>) {
     )
   )
 
-  LOGGER.info("Getting the list of all members (that could take a while)...")
+  logi("Getting the list of all members (that could take a while)...")
   val allMembers: Map<String, Member> = slackClient.getAllMembers().associateBy { it.id }
-  LOGGER.debug("allMembers=$allMembers")
+  logd("allMembers=$allMembers")
   val botMember = allMembers.values.first { it.name.equals(arguments.botName, ignoreCase = true) }
 
   while (true) {
     try {
       mainLoop(slackClient, botMember, allMembers, arguments, openAIClient)
     } catch (e: Exception) {
-      LOGGER.error("Exception caught in main loop", e)
+      loge(e, "Exception caught in main loop")
     }
-    LOGGER.debug("Was disconnected, reconnecting...")
+    logd("Was disconnected, reconnecting...")
     delay(10_000)
   }
 }
@@ -186,189 +186,223 @@ private suspend fun mainLoop(
   openAIClient: OpenAIClient,
 ) {
   val webSocketUrl = slackClient.appsConnectionsOpen()
-  LOGGER.debug("Connecting to WebSocket webSocketUrl=$webSocketUrl")
+  logd("Connecting to WebSocket webSocketUrl=$webSocketUrl")
 
   slackClient.openWebSocket(webSocketUrl) { event ->
-    LOGGER.debug("event=$event")
+    logd("event=$event")
     when (event) {
       is UnknownEvent -> {
-        LOGGER.warn("Ignoring unknown event type=${event.type}")
+        onUnknownEvent(event)
         return@openWebSocket
       }
 
-      is ReactionAddedEvent -> {
-        val messageTs = event.ts
-        val channel = event.channel
-        val channelLastMessages = getChannelLastMessages(channel)
-        val messageTargetIdx = channelLastMessages.indexOfFirst {
-          it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs
-        }
-        if (messageTargetIdx == -1) {
-          LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
-          return@openWebSocket
-        }
-        val messageTarget = channelLastMessages[messageTargetIdx]
-        if (messageTarget is BotMessage) {
-          LOGGER.debug("Ignoring reaction added event because messageTarget=$messageTarget is a bot message")
-          return@openWebSocket
-        }
-        val threadTs: String? = messageTarget.threadTs
-        val isBot = event.user == botMember.id
-        val reactionMessage = if (isBot) {
-          BotEmojiReaction(
-            threadTs = threadTs,
-            emoji = event.reaction
-          )
-        } else {
-          UserEmojiReaction(
-            emoji = event.reaction,
-            userName = allMembers[event.user]!!.displayName,
-            threadTs = threadTs
-          )
-        }
-        channelLastMessages.add(messageTargetIdx + 1, reactionMessage)
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
-
-        val randomInt = Random.nextInt(3)
-        LOGGER.debug("randomInt=$randomInt")
-        if (!isBot && randomInt <= 1) {
-          val botResponse =
-            getBotResponse(
-              botName = arguments.botName,
-              openAIClient = openAIClient,
-              systemMessage = arguments.reactionsSystemMessage.trim(),
-              exampleMessages = arguments.reactionsExampleMessages.mapIndexed { index, text ->
-                val isBotExampleMessage = index % 2 == 1
-                if (isBotExampleMessage) {
-                  BotEmojiReaction(
-                    emoji = text,
-                    threadTs = null,
-                  )
-                } else {
-                  UserMessage(
-                    ts = "",
-                    date = yesterday(),
-                    userName = text.substringBefore(" ").trim(),
-                    text = text.substringAfter(" ").trim(),
-                    threadTs = null,
-                  )
-                }
-              },
-              channelLastMessages = channelLastMessages
-                // Only include messages up to the message that was reacted to + the reaction itself
-                .subList(0, messageTargetIdx + 2)
-                .filteredByThread(threadTs)
-                // And only take as much as MESSAGE_COMPLETION_HISTORY_SIZE messages
-                .takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
-            )
-          LOGGER.debug("Bot response: $botResponse")
-          val emojis = botResponse.split(" ")
-            .filter { it.startsWith(":") && it.endsWith(":") }
-            .map { it.substring(1, it.length - 1) }
-          LOGGER.debug("Emojis: $emojis")
-          for (emoji in emojis) {
-            try {
-              slackClient.reactionsAdd(channel = channel, name = emoji, timestamp = messageTs)
-            } catch (e: Exception) {
-              LOGGER.warn("Error while adding reaction $emoji", e)
-            }
-          }
-        }
+      is MessageAddedEvent -> {
+        onMessageAdded(event, botMember, allMembers, arguments, openAIClient, slackClient)
       }
 
-      is MessageAddedEvent -> {
-        if (event.text.isBlank()) {
-          LOGGER.debug("Ignoring message event because text is blank (probably an image)")
-          return@openWebSocket
-        }
-        if (event.text == PROBLEM_MESSAGE) {
-          LOGGER.debug("Ignoring problem message")
-          return@openWebSocket
-        }
-
-        val channelLastMessages = getChannelLastMessages(event.channel)
-        val isBot = event.user == botMember.id
-        channelLastMessages.add(
-          if (isBot) {
-            BotMessage(
-              ts = event.ts,
-              threadTs = event.threadTs,
-              text = event.text
-            )
-          } else {
-            UserMessage(
-              ts = event.ts,
-              threadTs = event.threadTs,
-              userName = allMembers[event.user]!!.displayName,
-              text = event.text.replaceMentionsUserIdToName(allMembers)
-            )
-          }
-        )
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
-
-        if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
-          val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.threadTs)
-          val botResponse =
-            getBotResponse(
-              botName = arguments.botName,
-              openAIClient = openAIClient,
-              systemMessage = arguments.messagesSystemMessage.trim(),
-              exampleMessages = arguments.messagesExampleMessages.mapIndexed { index, text ->
-                val isBotExampleMessage = index % 2 == 1
-                if (isBotExampleMessage) {
-                  BotMessage(
-                    ts = "",
-                    threadTs = null,
-                    text = text,
-                  )
-                } else {
-                  UserMessage(
-                    ts = "",
-                    threadTs = null,
-                    date = yesterday(),
-                    userName = text.substringBefore(" ").trim(),
-                    text = text.substringAfter(" ").trim(),
-                  )
-                }
-              },
-              channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
-            )
-              .replaceMentionsNameToUserId(allMembers)
-          LOGGER.debug("Bot response: $botResponse")
-          slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.threadTs)
-        }
+      is ReactionAddedEvent -> {
+        onReactionAdded(event, botMember, allMembers, arguments, openAIClient, slackClient)
       }
 
       is MessageChangedEvent -> {
-        LOGGER.debug("Message changed event")
-        if (event.newText.isBlank()) {
-          LOGGER.debug("Ignoring message event because text is blank (probably an image)")
-          return@openWebSocket
-        }
-        val channelLastMessages = getChannelLastMessages(event.channel)
-        val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.changedTs }
-        if (originalMessageIdx == -1) {
-          LOGGER.debug("Ignoring message changed event because previous_message.ts=${event.changedTs} was not found in lastMessages")
-          return@openWebSocket
-        }
-        val updatedMessage = (channelLastMessages[originalMessageIdx] as UserMessage).copy(text = event.newText)
-        channelLastMessages[originalMessageIdx] = updatedMessage
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+        onMessageChanged(event)
       }
 
       is MessageDeletedEvent -> {
-        LOGGER.debug("Message deleted event")
-        val channelLastMessages = getChannelLastMessages(event.channel)
-        val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.deletedTs }
-        if (originalMessageIdx == -1) {
-          LOGGER.debug("Ignoring message deleted event because previous_message.ts=${event.deletedTs} was not found in lastMessages")
-          return@openWebSocket
-        }
-        channelLastMessages.removeAt(originalMessageIdx)
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+        onMessageDeleted(event)
       }
     }
   }
+}
+
+private fun onUnknownEvent(event: UnknownEvent) {
+  logw("Ignoring unknown event type=${event.type}")
+}
+
+private suspend fun onMessageAdded(
+  event: MessageAddedEvent,
+  botMember: Member,
+  allMembers: Map<String, Member>,
+  arguments: Arguments,
+  openAIClient: OpenAIClient,
+  slackClient: SlackClient,
+) {
+  if (event.text.isBlank()) {
+    logd("Ignoring message event because text is blank (probably an image)")
+    return
+  }
+  if (event.text == PROBLEM_MESSAGE) {
+    logd("Ignoring problem message")
+    return
+  }
+
+  val channelLastMessages = getChannelLastMessages(event.channel)
+  val isBot = event.user == botMember.id
+  channelLastMessages.add(
+    if (isBot) {
+      BotMessage(
+        ts = event.ts,
+        threadTs = event.threadTs,
+        text = event.text
+      )
+    } else {
+      UserMessage(
+        ts = event.ts,
+        threadTs = event.threadTs,
+        userName = allMembers[event.user]!!.displayName,
+        text = event.text.replaceMentionsUserIdToName(allMembers)
+      )
+    }
+  )
+  logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+
+  if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
+    val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.threadTs)
+    val botResponse =
+      getBotResponse(
+        botName = arguments.botName,
+        openAIClient = openAIClient,
+        systemMessage = arguments.messagesSystemMessage.trim(),
+        exampleMessages = arguments.messagesExampleMessages.mapIndexed { index, text ->
+          val isBotExampleMessage = index % 2 == 1
+          if (isBotExampleMessage) {
+            BotMessage(
+              ts = "",
+              threadTs = null,
+              text = text,
+            )
+          } else {
+            UserMessage(
+              ts = "",
+              threadTs = null,
+              date = yesterday(),
+              userName = text.substringBefore(" ").trim(),
+              text = text.substringAfter(" ").trim(),
+            )
+          }
+        },
+        channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
+      )
+        .replaceMentionsNameToUserId(allMembers)
+    logd("Bot response: $botResponse")
+    slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.threadTs)
+  }
+}
+
+private suspend fun onReactionAdded(
+  event: ReactionAddedEvent,
+  botMember: Member,
+  allMembers: Map<String, Member>,
+  arguments: Arguments,
+  openAIClient: OpenAIClient,
+  slackClient: SlackClient,
+) {
+  val messageTs = event.ts
+  val channel = event.channel
+  val channelLastMessages = getChannelLastMessages(channel)
+  val messageTargetIdx = channelLastMessages.indexOfFirst {
+    it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs
+  }
+  if (messageTargetIdx == -1) {
+    logd("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
+    return
+  }
+  val messageTarget = channelLastMessages[messageTargetIdx]
+  if (messageTarget is BotMessage) {
+    logd("Ignoring reaction added event because messageTarget=$messageTarget is a bot message")
+    return
+  }
+  val threadTs: String? = messageTarget.threadTs
+  val isBot = event.user == botMember.id
+  val reactionMessage = if (isBot) {
+    BotEmojiReaction(
+      threadTs = threadTs,
+      emoji = event.reaction
+    )
+  } else {
+    UserEmojiReaction(
+      emoji = event.reaction,
+      userName = allMembers[event.user]!!.displayName,
+      threadTs = threadTs
+    )
+  }
+  channelLastMessages.add(messageTargetIdx + 1, reactionMessage)
+  logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+
+  val randomInt = Random.nextInt(3)
+  logd("randomInt=$randomInt")
+  if (!isBot && randomInt <= 1) {
+    val botResponse =
+      getBotResponse(
+        botName = arguments.botName,
+        openAIClient = openAIClient,
+        systemMessage = arguments.reactionsSystemMessage.trim(),
+        exampleMessages = arguments.reactionsExampleMessages.mapIndexed { index, text ->
+          val isBotExampleMessage = index % 2 == 1
+          if (isBotExampleMessage) {
+            BotEmojiReaction(
+              emoji = text,
+              threadTs = null,
+            )
+          } else {
+            UserMessage(
+              ts = "",
+              date = yesterday(),
+              userName = text.substringBefore(" ").trim(),
+              text = text.substringAfter(" ").trim(),
+              threadTs = null,
+            )
+          }
+        },
+        channelLastMessages = channelLastMessages
+          // Only include messages up to the message that was reacted to + the reaction itself
+          .subList(0, messageTargetIdx + 2)
+          .filteredByThread(threadTs)
+          // And only take as much as MESSAGE_COMPLETION_HISTORY_SIZE messages
+          .takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
+      )
+    logd("Bot response: $botResponse")
+    val emojis = botResponse.split(" ")
+      .filter { it.startsWith(":") && it.endsWith(":") }
+      .map { it.substring(1, it.length - 1) }
+    logd("Emojis: $emojis")
+    for (emoji in emojis) {
+      try {
+        slackClient.reactionsAdd(channel = channel, name = emoji, timestamp = messageTs)
+      } catch (e: Exception) {
+        logw(e, "Error while adding reaction $emoji")
+      }
+    }
+  }
+}
+
+private fun onMessageChanged(event: MessageChangedEvent) {
+  logd("Message changed event")
+  if (event.newText.isBlank()) {
+    logd("Ignoring message event because text is blank (probably an image)")
+    return
+  }
+  val channelLastMessages = getChannelLastMessages(event.channel)
+  val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.changedTs }
+  if (originalMessageIdx == -1) {
+    logd("Ignoring message changed event because previous_message.ts=${event.changedTs} was not found in lastMessages")
+    return
+  }
+  val updatedMessage = (channelLastMessages[originalMessageIdx] as UserMessage).copy(text = event.newText)
+  channelLastMessages[originalMessageIdx] = updatedMessage
+  logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+}
+
+private fun onMessageDeleted(event: MessageDeletedEvent) {
+  logd("Message deleted event")
+  val channelLastMessages = getChannelLastMessages(event.channel)
+  val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.deletedTs }
+  if (originalMessageIdx == -1) {
+    logd("Ignoring message deleted event because previous_message.ts=${event.deletedTs} was not found in lastMessages")
+    return
+  }
+  channelLastMessages.removeAt(originalMessageIdx)
+  logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
 }
 
 private fun List<Message>.filteredByThread(threadTs: String?): List<Message> {
@@ -376,7 +410,7 @@ private fun List<Message>.filteredByThread(threadTs: String?): List<Message> {
     val threadParentIdx =
       indexOfFirst { it is UserMessage && it.ts == threadTs || it is BotMessage && it.ts == threadTs }
     if (threadParentIdx == -1) {
-      LOGGER.debug("Thread $threadTs not found in channelLastMessages")
+      logd("Thread $threadTs not found in channelLastMessages")
       emptyList()
     } else {
       val messagesUpToAndIncludingParent = subList(0, threadParentIdx + 1)
@@ -411,7 +445,7 @@ private suspend fun getBotResponse(
       is UserMessage -> OpenAIClient.Message.User(it.toOpenAiMessage())
     }
   }
-  LOGGER.debug("chatCompletion messages:\n${messages.joinToString("\n")}")
+  logd("chatCompletion messages:\n${messages.joinToString("\n")}")
   if (FAKE_BOT_RESPONSES) return "Fake bot response"
   return try {
     openAIClient.chatCompletion(
@@ -420,7 +454,7 @@ private suspend fun getBotResponse(
       messages = messages,
     )
   } catch (e: Exception) {
-    LOGGER.warn("Could not get chat completion with gpt-4o, trying gpt-3.5-turbo", e)
+    logw(e, "Could not get chat completion with gpt-4o, trying gpt-3.5-turbo")
 
     try {
       openAIClient.chatCompletion(
@@ -429,7 +463,7 @@ private suspend fun getBotResponse(
         messages = messages,
       )
     } catch (e: Exception) {
-      LOGGER.warn("Could not get chat completion with gpt-3.5-turbo, give up", e)
+      logw(e, "Could not get chat completion with gpt-3.5-turbo, give up")
       null
     }
   }
@@ -441,7 +475,7 @@ private fun String.replaceMentionsUserIdToName(allMembers: Map<String, Member>):
     val memberId = matchResult.groupValues[1]
     val member = allMembers[memberId]
     if (member == null) {
-      LOGGER.warn("Could not find member with id $memberId")
+      logw("Could not find member with id $memberId")
       matchResult.value
     } else {
       "@${member.displayName}"
@@ -454,10 +488,30 @@ private fun String.replaceMentionsNameToUserId(allMembers: Map<String, Member>):
     val memberName = matchResult.groupValues[1]
     val member = allMembers.values.firstOrNull { it.displayName == memberName }
     if (member == null) {
-      LOGGER.warn("Could not find member with name $memberName")
+      logw("Could not find member with name $memberName")
       matchResult.value
     } else {
       "<@${member.id}>"
     }
   }
+}
+
+private fun logd(s: String) {
+  LOGGER.debug(s)
+}
+
+private fun logi(s: String) {
+  LOGGER.info(s)
+}
+
+private fun logw(t: Throwable, s: String) {
+  LOGGER.warn(s, t)
+}
+
+private fun logw(s: String) {
+  LOGGER.warn(s)
+}
+
+private fun loge(t: Throwable, s: String) {
+  LOGGER.error(s, t)
 }

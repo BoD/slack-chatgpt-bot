@@ -23,17 +23,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package org.jraf.slackchatgptbot.openai.json
+package org.jraf.slackchatgptbot.openai.json.threads
 
-import kotlinx.serialization.EncodeDefault
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 
 @Serializable
-@OptIn(ExperimentalSerializationApi::class)
-data class JsonChatCompletionsRequest(
-  @EncodeDefault
-  val model: String = "gpt-4o",
-
-  val messages: List<JsonMessage>,
+data class JsonThreadsCreateResponse(
+  val id: String,
+  val created_at: Long,
 )

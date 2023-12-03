@@ -38,11 +38,16 @@ import io.ktor.client.plugins.logging.Logger
 import io.ktor.client.plugins.logging.Logging
 import io.ktor.http.URLBuilder
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import org.jraf.slackchatgptbot.openai.client.configuration.ClientConfiguration
 import org.jraf.slackchatgptbot.openai.client.configuration.HttpLoggingLevel
-import org.jraf.slackchatgptbot.openai.json.JsonChatCompletionsRequest
-import org.jraf.slackchatgptbot.openai.json.JsonMessage
+import org.jraf.slackchatgptbot.openai.json.chat.completions.JsonChatCompletionsMessage
+import org.jraf.slackchatgptbot.openai.json.chat.completions.JsonChatCompletionsRequest
+import org.jraf.slackchatgptbot.openai.json.threads.JsonThreadsMessage
+import org.jraf.slackchatgptbot.openai.json.threads.JsonThreadsMessagesCreateRequest
+import org.jraf.slackchatgptbot.openai.json.threads.JsonThreadsRun
+import org.jraf.slackchatgptbot.openai.json.threads.JsonThreadsRunsCreateRequest
 
 class OpenAIClient(private val clientConfiguration: ClientConfiguration) {
   private val service: OpenAIService by lazy {
@@ -114,13 +119,13 @@ class OpenAIClient(private val clientConfiguration: ClientConfiguration) {
       JsonChatCompletionsRequest(
         model = model,
         messages = buildList {
-          add(JsonMessage(role = JsonMessage.ROLE_SYSTEM, content = systemMessage))
+          add(JsonChatCompletionsMessage(role = JsonChatCompletionsMessage.ROLE_SYSTEM, content = systemMessage))
           addAll(
             messages.map {
-              JsonMessage(
+              JsonChatCompletionsMessage(
                 role = when (it) {
-                  is Message.User -> JsonMessage.ROLE_USER
-                  is Message.Assistant -> JsonMessage.ROLE_ASSISTANT
+                  is Message.User -> JsonChatCompletionsMessage.ROLE_USER
+                  is Message.Assistant -> JsonChatCompletionsMessage.ROLE_ASSISTANT
                 },
                 content = it.content
               )
@@ -130,5 +135,43 @@ class OpenAIClient(private val clientConfiguration: ClientConfiguration) {
       )
     )
     return chatCompletions.choices.singleOrNull()?.message?.content
+  }
+
+  suspend fun createThread(): String {
+    return service.threadsCreate().id
+  }
+
+  suspend fun addMessageToThread(threadId: String, content: String): String {
+    return service.threadsMessagesCreate(
+      threadId = threadId,
+      messageCreateRequest = JsonThreadsMessagesCreateRequest(
+        role = JsonThreadsMessage.ROLE_USER,
+        content = content,
+      )
+    ).id
+  }
+
+  suspend fun runThread(threadId: String, assistantId: String): List<String> {
+    var run = service.threadsRunsCreate(
+      threadId = threadId,
+      runCreateRequest = JsonThreadsRunsCreateRequest(
+        assistant_id = assistantId
+      )
+    )
+    var count = 0
+    while ((run.status == JsonThreadsRun.STATUS_QUEUED || run.status == JsonThreadsRun.STATUS_IN_PROGRESS) && count < 15) {
+      delay(1000 + count * 500L)
+      run = service.threadsRunsRetrieve(threadId = threadId, runId = run.id)
+      count++
+    }
+    if (run.status == JsonThreadsRun.STATUS_QUEUED || run.status == JsonThreadsRun.STATUS_IN_PROGRESS) {
+      throw Exception("Run ${run.id} on Thread ${threadId} is still queued or in progress after 15 tries")
+    }
+    if (run.status != JsonThreadsRun.STATUS_COMPLETED) {
+      throw Exception("Run ${run.id} on Thread ${threadId} has status ${run.status} (expected ${JsonThreadsRun.STATUS_COMPLETED})")
+    }
+    return service.threadsMessagesList(threadId = threadId)
+      .takeWhile { it.role == JsonThreadsMessage.ROLE_ASSISTANT }
+      .flatMap { it.content.map { content -> content.text.value } }
   }
 }
