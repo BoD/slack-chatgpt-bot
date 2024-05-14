@@ -197,7 +197,7 @@ private suspend fun mainLoop(
       }
 
       is MessageAddedEvent -> {
-        onMessageAdded(event, botMember, allMembers, arguments, openAIClient, slackClient)
+        onMessageAdded(event, botMember, allMembers, openAIClient, slackClient)
       }
 
       is ReactionAddedEvent -> {
@@ -219,11 +219,13 @@ private fun onUnknownEvent(event: UnknownEvent) {
   logw("Ignoring unknown event type=${event.type}")
 }
 
+
+// TODO Make this a class, so no need to pass around clients and stuff
+
 private suspend fun onMessageAdded(
   event: MessageAddedEvent,
   botMember: Member,
   allMembers: Map<String, Member>,
-  arguments: Arguments,
   openAIClient: OpenAIClient,
   slackClient: SlackClient,
 ) {
@@ -236,54 +238,15 @@ private suspend fun onMessageAdded(
     return
   }
 
-  val channelLastMessages = getChannelLastMessages(event.channel)
   val isBot = event.user == botMember.id
-  channelLastMessages.add(
-    if (isBot) {
-      BotMessage(
-        ts = event.ts,
-        threadTs = event.threadTs,
-        text = event.text
-      )
-    } else {
-      UserMessage(
-        ts = event.ts,
-        threadTs = event.threadTs,
-        userName = allMembers[event.user]!!.displayName,
-        text = event.text.replaceMentionsUserIdToName(allMembers)
-      )
-    }
-  )
-  logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+  if (isBot) {
+    logd("Ignoring bot message")
+    return
+  }
 
-  if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
-    val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.threadTs)
-    val botResponse =
-      getBotResponse(
-        botName = arguments.botName,
-        openAIClient = openAIClient,
-        systemMessage = arguments.messagesSystemMessage.trim(),
-        exampleMessages = arguments.messagesExampleMessages.mapIndexed { index, text ->
-          val isBotExampleMessage = index % 2 == 1
-          if (isBotExampleMessage) {
-            BotMessage(
-              ts = "",
-              threadTs = null,
-              text = text,
-            )
-          } else {
-            UserMessage(
-              ts = "",
-              threadTs = null,
-              date = yesterday(),
-              userName = text.substringBefore(" ").trim(),
-              text = text.substringAfter(" ").trim(),
-            )
-          }
-        },
-        channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
-      )
-        .replaceMentionsNameToUserId(allMembers)
+  openAIClient.addMessageToThread(currentThreadId, event.text.replaceMentionsNameToUserId(allMembers))
+
+  if (event.text.contains("<@${botMember.id}>")) {
     logd("Bot response: $botResponse")
     slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.threadTs)
   }
