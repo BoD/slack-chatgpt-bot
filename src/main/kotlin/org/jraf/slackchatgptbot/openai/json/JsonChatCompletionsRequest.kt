@@ -33,7 +33,7 @@ import kotlinx.serialization.Serializable
 @OptIn(ExperimentalSerializationApi::class)
 data class JsonChatCompletionsRequest(
   @EncodeDefault
-  val model: String = "gpt-3.5-turbo",
+  val model: String = "gpt-4o",
 
   val messages: List<JsonMessage>,
 )

@@ -415,12 +415,12 @@ private suspend fun getBotResponse(
   if (FAKE_BOT_RESPONSES) return "Fake bot response"
   return try {
     openAIClient.chatCompletion(
-      model = "gpt-4-1106-preview",
+      model = "gpt-4o",
       systemMessage = systemMessage,
       messages = messages,
     )
   } catch (e: Exception) {
-    LOGGER.warn("Could not get chat completion with gpt-4, trying gpt-3.5-turbo", e)
+    LOGGER.warn("Could not get chat completion with gpt-4o, trying gpt-3.5-turbo", e)
 
     try {
       openAIClient.chatCompletion(

@@ -38,7 +38,7 @@ dependencies {
   implementation(KotlinX.serialization.json)
 
   // Slack
-  implementation("org.jraf.klibslack", "klibslack", "_")
+  implementation("org.jraf", "klibslack", "_")
 
   implementation(KotlinX.cli)
 
