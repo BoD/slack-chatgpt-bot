@@ -52,7 +52,7 @@ application {
 docker {
   javaApplication {
     // Use OpenJ9 instead of the default one
-    baseImage.set("adoptopenjdk/openjdk11-openj9:x86_64-ubuntu-jre-11.0.18_10_openj9-0.36.1")
+    baseImage.set("adoptopenjdk/openjdk11-openj9:x86_64-ubuntu-jre-11.0.24_8_openj9-0.46.1")
     maintainer.set("BoD <BoD@JRAF.org>")
     ports.set(emptyList())
     images.add("bodlulu/${rootProject.name}:latest")

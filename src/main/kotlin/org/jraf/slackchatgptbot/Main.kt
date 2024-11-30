@@ -53,6 +53,7 @@ import kotlin.random.Random
 
 private val LOGGER = run {
   // This must be done before any logger is initialized
+  System.setProperty(SimpleLogger.LOG_FILE_KEY, "System.out")
   System.setProperty(SimpleLogger.DEFAULT_LOG_LEVEL_KEY, "trace")
   System.setProperty(SimpleLogger.SHOW_DATE_TIME_KEY, "true")
   System.setProperty(SimpleLogger.DATE_TIME_FORMAT_KEY, "yyyy-MM-dd HH:mm:ss")
