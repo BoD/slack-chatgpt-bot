@@ -416,21 +416,21 @@ private suspend fun getBotResponse(
   if (FAKE_BOT_RESPONSES) return "Fake bot response"
   return try {
     openAIClient.chatCompletion(
-      model = "gpt-4o",
+      model = "gpt-5",
       systemMessage = systemMessage,
       messages = messages,
     )
   } catch (e: Exception) {
-    LOGGER.warn("Could not get chat completion with gpt-4o, trying gpt-3.5-turbo", e)
+    LOGGER.warn("Could not get chat completion with gpt-5, trying gpt-4o", e)
 
     try {
       openAIClient.chatCompletion(
-        model = "gpt-3.5-turbo",
+        model = "gpt-4o",
         systemMessage = systemMessage,
         messages = messages,
       )
     } catch (e: Exception) {
-      LOGGER.warn("Could not get chat completion with gpt-3.5-turbo, give up", e)
+      LOGGER.warn("Could not get chat completion with gpt-4o, give up", e)
       null
     }
   }
