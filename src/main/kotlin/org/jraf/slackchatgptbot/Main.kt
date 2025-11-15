@@ -416,7 +416,7 @@ private suspend fun getBotResponse(
   if (FAKE_BOT_RESPONSES) return "Fake bot response"
   return try {
     openAIClient.chatCompletion(
-      model = "gpt-5",
+      model = "gpt-5.1",
       systemMessage = systemMessage,
       messages = messages,
     )

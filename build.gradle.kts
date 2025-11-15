@@ -1,4 +1,6 @@
 import com.bmuschko.gradle.docker.tasks.image.DockerBuildImage
+import com.bmuschko.gradle.docker.tasks.image.Dockerfile
+import com.bmuschko.gradle.docker.tasks.image.Dockerfile.CopyFileInstruction
 
 plugins {
   kotlin("jvm")
@@ -9,11 +11,6 @@ plugins {
 
 group = "org.jraf"
 version = "1.0.0"
-
-repositories {
-  mavenLocal()
-  mavenCentral()
-}
 
 kotlin {
   jvmToolchain(11)
@@ -52,7 +49,7 @@ application {
 docker {
   javaApplication {
     // Use OpenJ9 instead of the default one
-    baseImage.set("adoptopenjdk/openjdk11-openj9:x86_64-ubuntu-jre-11.0.24_8_openj9-0.46.1")
+    baseImage.set("adoptopenjdk/openjdk11-openj9:x86_64-ubuntu-jre-11.0.29_7_openj9-0.56.0")
     maintainer.set("BoD <BoD@JRAF.org>")
     ports.set(emptyList())
     images.add("bodlulu/${rootProject.name}:latest")
@@ -67,6 +64,16 @@ docker {
 
 tasks.withType<DockerBuildImage> {
   platform.set("linux/amd64")
+}
+
+tasks.withType<Dockerfile> {
+  // Move the COPY instructions to the end
+  // See https://github.com/bmuschko/gradle-docker-plugin/issues/1093
+  instructions.set(
+    instructions.get().sortedBy { instruction ->
+      if (instruction.keyword == CopyFileInstruction.KEYWORD) 1 else 0
+    }
+  )
 }
 
 // `./gradlew refreshVersions` to update dependencies
