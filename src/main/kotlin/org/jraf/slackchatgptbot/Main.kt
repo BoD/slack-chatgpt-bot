@@ -22,11 +22,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-@file:Suppress("LoggingStringTemplateAsArgument")
-
 package org.jraf.slackchatgptbot
 
 import kotlinx.coroutines.delay
+import org.jraf.klibnanolog.logd
+import org.jraf.klibnanolog.loge
+import org.jraf.klibnanolog.logi
+import org.jraf.klibnanolog.logw
+import org.jraf.klibopenai.client.OpenAIClient
 import org.jraf.klibslack.client.SlackClient
 import org.jraf.klibslack.client.configuration.ClientConfiguration
 import org.jraf.klibslack.client.configuration.HttpConfiguration
@@ -42,24 +45,12 @@ import org.jraf.slackchatgptbot.Message.BotMessage
 import org.jraf.slackchatgptbot.Message.UserEmojiReaction
 import org.jraf.slackchatgptbot.Message.UserMessage
 import org.jraf.slackchatgptbot.arguments.Arguments
-import org.jraf.slackchatgptbot.openai.client.OpenAIClient
 import org.jraf.slackchatgptbot.util.MaxSizedMutableList
 import org.jraf.slackchatgptbot.util.yesterday
-import org.slf4j.LoggerFactory
-import org.slf4j.simple.SimpleLogger
 import java.text.SimpleDateFormat
 import java.util.Date
 import kotlin.random.Random
-
-private val LOGGER = run {
-  // This must be done before any logger is initialized
-  System.setProperty(SimpleLogger.LOG_FILE_KEY, "System.out")
-  System.setProperty(SimpleLogger.DEFAULT_LOG_LEVEL_KEY, "trace")
-  System.setProperty(SimpleLogger.SHOW_DATE_TIME_KEY, "true")
-  System.setProperty(SimpleLogger.DATE_TIME_FORMAT_KEY, "yyyy-MM-dd HH:mm:ss")
-
-  LoggerFactory.getLogger("Main")
-}
+import kotlin.time.Duration.Companion.seconds
 
 private const val FAKE_BOT_RESPONSES = false
 
@@ -138,18 +129,18 @@ private sealed interface Message {
 private val lastMessages = mutableMapOf<String, MutableList<Message>>()
 
 suspend fun main(av: Array<String>) {
-  LOGGER.info("Hello, World!")
+  logi("Hello, World!")
   val arguments = Arguments(av)
-  LOGGER.info("arguments=$arguments")
+  logi("arguments=$arguments")
 
   val openAIClient = OpenAIClient(
-    org.jraf.slackchatgptbot.openai.client.configuration.ClientConfiguration(
+    org.jraf.klibopenai.client.configuration.ClientConfiguration(
       authBearerToken = arguments.openAiAuthToken,
-      httpConfiguration = org.jraf.slackchatgptbot.openai.client.configuration.HttpConfiguration(
-        loggingLevel = org.jraf.slackchatgptbot.openai.client.configuration.HttpLoggingLevel.ALL,
-//        httpProxy = org.jraf.slackchatgptbot.openai.client.configuration.HttpProxy("localhost", 8888)
-      )
-    )
+      httpConfiguration = org.jraf.klibopenai.client.configuration.HttpConfiguration(
+        loggingLevel = org.jraf.klibopenai.client.configuration.HttpLoggingLevel.ALL,
+//        httpProxy = org.jraf.klibopenai.client.configuration.HttpProxy("localhost", 8888)
+      ),
+    ),
   )
 
   val slackClient = SlackClient.newInstance(
@@ -159,23 +150,23 @@ suspend fun main(av: Array<String>) {
       httpConfiguration = HttpConfiguration(
         loggingLevel = HttpLoggingLevel.ALL,
 //        httpProxy = HttpProxy("localhost", 8888)
-      )
-    )
+      ),
+    ),
   )
 
-  LOGGER.info("Getting the list of all members (that could take a while)...")
+  logi("Getting the list of all members (that could take a while)...")
   val allMembers: Map<String, Member> = slackClient.getAllMembers().associateBy { it.id }
-  LOGGER.debug("allMembers=$allMembers")
+  logd("allMembers=$allMembers")
   val botMember = allMembers.values.first { it.name.equals(arguments.botName, ignoreCase = true) }
 
   while (true) {
     try {
       mainLoop(slackClient, botMember, allMembers, arguments, openAIClient)
     } catch (e: Exception) {
-      LOGGER.error("Exception caught in main loop", e)
+      loge(e, "Exception caught in main loop")
     }
-    LOGGER.debug("Was disconnected, reconnecting...")
-    delay(10_000)
+    logd("Was disconnected, reconnecting...")
+    delay(10.seconds)
   }
 }
 
@@ -187,13 +178,13 @@ private suspend fun mainLoop(
   openAIClient: OpenAIClient,
 ) {
   val webSocketUrl = slackClient.appsConnectionsOpen()
-  LOGGER.debug("Connecting to WebSocket webSocketUrl=$webSocketUrl")
+  logd("Connecting to WebSocket webSocketUrl=$webSocketUrl")
 
   slackClient.openWebSocket(webSocketUrl) { event ->
-    LOGGER.debug("event=$event")
+    logd("event=$event")
     when (event) {
       is UnknownEvent -> {
-        LOGGER.warn("Ignoring unknown event type=${event.type}")
+        logw("Ignoring unknown event type=${event.type}")
         return@openWebSocket
       }
 
@@ -205,12 +196,12 @@ private suspend fun mainLoop(
           it is UserMessage && it.ts == messageTs || it is BotMessage && it.ts == messageTs
         }
         if (messageTargetIdx == -1) {
-          LOGGER.debug("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
+          logd("Ignoring reaction added event because messageTs=$messageTs was not found in channelLastMessages")
           return@openWebSocket
         }
         val messageTarget = channelLastMessages[messageTargetIdx]
         if (messageTarget is BotMessage) {
-          LOGGER.debug("Ignoring reaction added event because messageTarget=$messageTarget is a bot message")
+          logd("Ignoring reaction added event because messageTarget=$messageTarget is a bot message")
           return@openWebSocket
         }
         val threadTs: String? = messageTarget.threadTs
@@ -218,20 +209,20 @@ private suspend fun mainLoop(
         val reactionMessage = if (isBot) {
           BotEmojiReaction(
             threadTs = threadTs,
-            emoji = event.reaction
+            emoji = event.reaction,
           )
         } else {
           UserEmojiReaction(
             emoji = event.reaction,
             userName = allMembers[event.user]!!.displayName,
-            threadTs = threadTs
+            threadTs = threadTs,
           )
         }
         channelLastMessages.add(messageTargetIdx + 1, reactionMessage)
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+        logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
 
         val randomInt = Random.nextInt(3)
-        LOGGER.debug("randomInt=$randomInt")
+        logd("randomInt=$randomInt")
         if (!isBot && randomInt <= 1) {
           val botResponse =
             getBotResponse(
@@ -260,18 +251,18 @@ private suspend fun mainLoop(
                 .subList(0, messageTargetIdx + 2)
                 .filteredByThread(threadTs)
                 // And only take as much as MESSAGE_COMPLETION_HISTORY_SIZE messages
-                .takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
+                .takeLast(MESSAGE_COMPLETION_HISTORY_SIZE),
             )
-          LOGGER.debug("Bot response: $botResponse")
+          logd("Bot response: $botResponse")
           val emojis = botResponse.split(" ")
             .filter { it.startsWith(":") && it.endsWith(":") }
             .map { it.substring(1, it.length - 1) }
-          LOGGER.debug("Emojis: $emojis")
+          logd("Emojis: $emojis")
           for (emoji in emojis) {
             try {
               slackClient.reactionsAdd(channel = channel, name = emoji, timestamp = messageTs)
             } catch (e: Exception) {
-              LOGGER.warn("Error while adding reaction $emoji", e)
+              logw(e, "Error while adding reaction $emoji")
             }
           }
         }
@@ -279,11 +270,11 @@ private suspend fun mainLoop(
 
       is MessageAddedEvent -> {
         if (event.text.isBlank()) {
-          LOGGER.debug("Ignoring message event because text is blank (probably an image)")
+          logd("Ignoring message event because text is blank (probably an image)")
           return@openWebSocket
         }
         if (event.text == PROBLEM_MESSAGE) {
-          LOGGER.debug("Ignoring problem message")
+          logd("Ignoring problem message")
           return@openWebSocket
         }
 
@@ -294,18 +285,18 @@ private suspend fun mainLoop(
             BotMessage(
               ts = event.ts,
               threadTs = event.threadTs,
-              text = event.text
+              text = event.text,
             )
           } else {
             UserMessage(
               ts = event.ts,
               threadTs = event.threadTs,
               userName = allMembers[event.user]!!.displayName,
-              text = event.text.replaceMentionsUserIdToName(allMembers)
+              text = event.text.replaceMentionsUserIdToName(allMembers),
             )
-          }
+          },
         )
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+        logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
 
         if (event.text.contains("<@${botMember.id}>") && event.user != botMember.id) {
           val channelLastMessagesForThread = channelLastMessages.filteredByThread(event.threadTs)
@@ -332,41 +323,41 @@ private suspend fun mainLoop(
                   )
                 }
               },
-              channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE)
+              channelLastMessages = channelLastMessagesForThread.takeLast(MESSAGE_COMPLETION_HISTORY_SIZE),
             )
               .replaceMentionsNameToUserId(allMembers)
-          LOGGER.debug("Bot response: $botResponse")
+          logd("Bot response: $botResponse")
           slackClient.chatPostMessage(channel = event.channel, text = botResponse, threadTs = event.threadTs)
         }
       }
 
       is MessageChangedEvent -> {
-        LOGGER.debug("Message changed event")
+        logd("Message changed event")
         if (event.newText.isBlank()) {
-          LOGGER.debug("Ignoring message event because text is blank (probably an image)")
+          logd("Ignoring message event because text is blank (probably an image)")
           return@openWebSocket
         }
         val channelLastMessages = getChannelLastMessages(event.channel)
         val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.changedTs }
         if (originalMessageIdx == -1) {
-          LOGGER.debug("Ignoring message changed event because previous_message.ts=${event.changedTs} was not found in lastMessages")
+          logd("Ignoring message changed event because previous_message.ts=${event.changedTs} was not found in lastMessages")
           return@openWebSocket
         }
         val updatedMessage = (channelLastMessages[originalMessageIdx] as UserMessage).copy(text = event.newText)
         channelLastMessages[originalMessageIdx] = updatedMessage
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+        logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
       }
 
       is MessageDeletedEvent -> {
-        LOGGER.debug("Message deleted event")
+        logd("Message deleted event")
         val channelLastMessages = getChannelLastMessages(event.channel)
         val originalMessageIdx = channelLastMessages.indexOfFirst { it is UserMessage && it.ts == event.deletedTs }
         if (originalMessageIdx == -1) {
-          LOGGER.debug("Ignoring message deleted event because previous_message.ts=${event.deletedTs} was not found in lastMessages")
+          logd("Ignoring message deleted event because previous_message.ts=${event.deletedTs} was not found in lastMessages")
           return@openWebSocket
         }
         channelLastMessages.removeAt(originalMessageIdx)
-        LOGGER.debug("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
+        logd("channelLastMessages=\n${channelLastMessages.joinToString("\n")}")
       }
     }
   }
@@ -377,7 +368,7 @@ private fun List<Message>.filteredByThread(threadTs: String?): List<Message> {
     val threadParentIdx =
       indexOfFirst { it is UserMessage && it.ts == threadTs || it is BotMessage && it.ts == threadTs }
     if (threadParentIdx == -1) {
-      LOGGER.debug("Thread $threadTs not found in channelLastMessages")
+      logd("Thread $threadTs not found in channelLastMessages")
       emptyList()
     } else {
       val messagesUpToAndIncludingParent = subList(0, threadParentIdx + 1)
@@ -412,27 +403,17 @@ private suspend fun getBotResponse(
       is UserMessage -> OpenAIClient.Message.User(it.toOpenAiMessage())
     }
   }
-  LOGGER.debug("chatCompletion messages:\n${messages.joinToString("\n")}")
+  logd("chatCompletion messages:\n${messages.joinToString("\n")}")
   if (FAKE_BOT_RESPONSES) return "Fake bot response"
   return try {
     openAIClient.chatCompletion(
-      model = "gpt-5.1",
+      model = "gpt-6.1-sol",
       systemMessage = systemMessage,
       messages = messages,
     )
   } catch (e: Exception) {
-    LOGGER.warn("Could not get chat completion with gpt-5, trying gpt-4o", e)
-
-    try {
-      openAIClient.chatCompletion(
-        model = "gpt-4o",
-        systemMessage = systemMessage,
-        messages = messages,
-      )
-    } catch (e: Exception) {
-      LOGGER.warn("Could not get chat completion with gpt-4o, give up", e)
-      null
-    }
+    logw(e, "Could not get chat completion with gpt-6.1-sol, give up")
+    null
   }
     ?: PROBLEM_MESSAGE
 }
@@ -442,7 +423,7 @@ private fun String.replaceMentionsUserIdToName(allMembers: Map<String, Member>):
     val memberId = matchResult.groupValues[1]
     val member = allMembers[memberId]
     if (member == null) {
-      LOGGER.warn("Could not find member with id $memberId")
+      logw("Could not find member with id $memberId")
       matchResult.value
     } else {
       "@${member.displayName}"
@@ -455,7 +436,7 @@ private fun String.replaceMentionsNameToUserId(allMembers: Map<String, Member>):
     val memberName = matchResult.groupValues[1]
     val member = allMembers.values.firstOrNull { it.displayName == memberName }
     if (member == null) {
-      LOGGER.warn("Could not find member with name $memberName")
+      logw("Could not find member with name $memberName")
       matchResult.value
     } else {
       "<@${member.id}>"

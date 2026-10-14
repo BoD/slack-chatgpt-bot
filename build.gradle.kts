@@ -1,55 +1,44 @@
+
 import com.bmuschko.gradle.docker.tasks.image.DockerBuildImage
 import com.bmuschko.gradle.docker.tasks.image.Dockerfile
 import com.bmuschko.gradle.docker.tasks.image.Dockerfile.CopyFileInstruction
 
 plugins {
-  kotlin("jvm")
-  kotlin("plugin.serialization")
-  application
-  id("com.bmuschko.docker-java-application")
+  alias(libs.plugins.kotlin.jvm)
+  alias(libs.plugins.kotlin.serialization)
+  id("application")
+  alias(libs.plugins.dockerJavaApplication)
+  alias(libs.plugins.tapmoc)
 }
 
 group = "org.jraf"
 version = "1.0.0"
 
-kotlin {
-  jvmToolchain(11)
-}
-
-dependencies {
-  // Slf4j
-  implementation("org.slf4j", "slf4j-api", "_")
-  implementation("org.slf4j", "slf4j-simple", "_")
-
-  implementation(KotlinX.coroutines.jdk9)
-
-  // Ktor
-  implementation(Ktor.client.core)
-  implementation(Ktor.client.contentNegotiation)
-  implementation(Ktor.client.auth)
-  implementation(Ktor.client.logging)
-  implementation("io.ktor:ktor-client-websockets:_")
-  implementation(Ktor.plugins.serialization.kotlinx.json)
-  implementation(Ktor.client.okHttp)
-
-  implementation(KotlinX.serialization.json)
-
-  // Slack
-  implementation("org.jraf", "klibslack", "_")
-
-  implementation(KotlinX.cli)
-
-  testImplementation(kotlin("test"))
-}
-
 application {
   mainClass.set("org.jraf.slackchatgptbot.MainKt")
 }
 
+dependencies {
+  // Logging
+  implementation(libs.klibnanolog)
+  implementation(libs.logback)
+
+  // Coroutines
+  implementation(libs.kotlinx.coroutines.jdk9)
+
+  // OpenAI
+  implementation(libs.klibopenai)
+
+  // Slack
+  implementation(libs.klibslack)
+
+  // CLI
+  implementation(libs.kotlinx.cli)
+}
+
 docker {
   javaApplication {
-    // Use OpenJ9 instead of the default one
-    baseImage.set("adoptopenjdk/openjdk11-openj9:x86_64-ubuntu-jre-11.0.29_7_openj9-0.56.0")
+    baseImage.set("eclipse-temurin:25")
     maintainer.set("BoD <BoD@JRAF.org>")
     ports.set(emptyList())
     images.add("bodlulu/${rootProject.name}:latest")
@@ -67,6 +56,21 @@ tasks.withType<DockerBuildImage> {
 }
 
 tasks.withType<Dockerfile> {
+  // Install curl
+  runCommand("apt-get update")
+  runCommand("apt-get install -y curl")
+
+  // Download the OpenTelemetry Java agent
+  runCommand("curl -L -O https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar")
+
+  // OpenTelemetry Java agent configuration
+  environmentVariable(
+    mapOf(
+      "JAVA_TOOL_OPTIONS" to "-javaagent:opentelemetry-javaagent.jar",
+      "OTEL_SERVICE_NAME" to rootProject.name.lowercase(),
+    )
+  )
+
   // Move the COPY instructions to the end
   // See https://github.com/bmuschko/gradle-docker-plugin/issues/1093
   instructions.set(
@@ -74,6 +78,12 @@ tasks.withType<Dockerfile> {
       if (instruction.keyword == CopyFileInstruction.KEYWORD) 1 else 0
     }
   )
+}
+
+tapmoc {
+  java(25)
+  kotlin(libs.versions.kotlin.get())
+  checkDependencies()
 }
 
 // `./gradlew refreshVersions` to update dependencies
